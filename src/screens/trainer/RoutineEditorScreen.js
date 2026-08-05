@@ -321,6 +321,12 @@ function ExerciseCard({ slot, index, total, colors, styles, onEdit, onDelete, on
       hoverIndexSV.value    = -1;
       draggingIndexSV.value = -1;
       runOnJS(commitReorder)(index, target);
+    })
+    .onFinalize(() => {
+      // Always reset state — covers gesture cancellation (no onEnd fired)
+      hoverIndexSV.value    = -1;
+      draggingIndexSV.value = -1;
+      runOnJS(onDragEnd)();
     });
 
   const cardStyle = useAnimatedStyle(() => {
@@ -472,6 +478,7 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
   const [mounted, setMounted]         = useState(visible);
   const [search, setSearch]           = useState('');
   const [activeGroup, setActiveGroup] = useState(null);
+  const [gifItem, setGifItem]         = useState(null);
   const scale   = useSharedValue(0.9);
   const opacity = useSharedValue(0);
 
@@ -540,7 +547,7 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
-                {(search || activeGroup) && (
+                {search.length > 0 && (
                   <TouchableOpacity onPress={() => { setSearch(''); setActiveGroup(null); }}>
                     <Ionicons name="close-circle" size={14} color={colors.textTertiary} />
                   </TouchableOpacity>
@@ -549,10 +556,7 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
 
               {/* Category chips */}
               {!search && (
-                <ScrollView
-                  horizontal showsHorizontalScrollIndicator={false}
-                  style={pmSt.chipRow} contentContainerStyle={pmSt.chips}
-                >
+                <View style={pmSt.chipRow}>
                   {MUSCLE_GROUPS.map(g => {
                     const active = activeGroup === g.id;
                     return (
@@ -571,7 +575,7 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
                       </TouchableOpacity>
                     );
                   })}
-                </ScrollView>
+                </View>
               )}
 
               {/* Results */}
@@ -581,26 +585,35 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
                   keyExtractor={item => item.id}
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
+                  style={{ maxHeight: screenH * 0.38 }}
                   ListEmptyComponent={
                     <Text style={[pmSt.empty, { color: colors.textTertiary }]}>Sin resultados</Text>
                   }
                   renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={[pmSt.exRow, { borderBottomColor: colors.borderLight }]}
-                      onPress={() => { setSearch(''); setActiveGroup(null); onSelect(item); }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={pmSt.exThumb}>
+                    <View style={[pmSt.exRow, { borderBottomColor: colors.borderLight }]}>
+                      <TouchableOpacity
+                        style={pmSt.exThumb}
+                        onPress={() => setGifItem(item)}
+                        activeOpacity={0.8}
+                      >
                         <Image source={{ uri: getExerciseImage(item) }} style={pmSt.exThumbImg} resizeMode="contain" />
-                      </View>
-                      <View style={pmSt.exInfo}>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={pmSt.exInfo}
+                        onPress={() => { setSearch(''); setActiveGroup(null); onSelect(item); }}
+                        activeOpacity={0.7}
+                      >
                         <Text style={[pmSt.exName, { color: colors.text }]}>{item.nombre}</Text>
                         <Text style={[pmSt.exMeta, { color: colors.textTertiary }]}>{item.maquina}</Text>
-                      </View>
-                      <View style={[pmSt.addBtn, { backgroundColor: colors.primaryDim12 }]}>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[pmSt.addBtn, { backgroundColor: colors.primaryDim12 }]}
+                        onPress={() => { setSearch(''); setActiveGroup(null); onSelect(item); }}
+                        activeOpacity={0.7}
+                      >
                         <Ionicons name="add" size={16} color={colors.primary} />
-                      </View>
-                    </TouchableOpacity>
+                      </TouchableOpacity>
+                    </View>
                   )}
                 />
               ) : (
@@ -614,6 +627,24 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
           </Pressable>
         </KeyboardAvoidingView>
       </Pressable>
+
+      {/* GIF preview — stacks on top of the picker */}
+      {gifItem && (
+        <Modal transparent visible animationType="fade" onRequestClose={() => setGifItem(null)} statusBarTranslucent>
+          <Pressable style={gifSt.backdrop} onPress={() => setGifItem(null)}>
+            <Pressable style={gifSt.card} onPress={() => {}}>
+              <View style={gifSt.imgWrap}>
+                <Image
+                  source={{ uri: getExerciseGif(gifItem) ?? getExerciseImage(gifItem) }}
+                  style={gifSt.img}
+                  resizeMode="contain"
+                />
+              </View>
+              <Text style={gifSt.name} numberOfLines={2}>{gifItem.nombre}</Text>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
     </Modal>
   );
 }
@@ -653,12 +684,13 @@ const pmSt = StyleSheet.create({
     paddingHorizontal: 12, height: 38, marginBottom: 10,
   },
   searchInput: { flex: 1, fontSize: 14 },
-  chipRow: { marginBottom: 10 },
-  chips: { gap: 6, paddingBottom: 2 },
+  chipRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10,
+  },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 20, borderWidth: 1.5, marginRight: 6,
+    borderRadius: 20, borderWidth: 1.5,
   },
   chipText: { fontSize: 11, fontWeight: '700' },
   exRow: {

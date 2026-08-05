@@ -42,6 +42,11 @@
         }
       ],
       "react-native-health-connect"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "5c5f8b0b-f34b-43a6-8400-f9c88b1d3eb2"
+      }
+    }
   }
 }
