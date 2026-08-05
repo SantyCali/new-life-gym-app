@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "New Life",
+    "slug": "new-life-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "newlife",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0A0A0A"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.newlife.app",
+      "infoPlist": {
+        "CADisableMinimumFrameDurationOnPhone": true
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0A0A"
+      },
+      "package": "com.newlife.app",
+      "softwareKeyboardLayoutMode": "pan"
+    },
+    "web": {
+      "bundler": "metro",
+      "backgroundColor": "#0A0A0A"
+    },
+    "plugins": [
+      "expo-font",
+      "@react-native-community/datetimepicker",
+      "expo-notifications",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Necesitamos acceso al sensor de movimiento para contar tus pasos diarios."
+        }
+      ],
+      "react-native-health-connect"
+    ]
+  }
+}

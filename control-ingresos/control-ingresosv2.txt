@@ -1,0 +1,838 @@
+// 1. Genera la interfaz web
+function doGet() {
+  return HtmlService.createHtmlOutput(obtenerDisenoHtml())
+    .setTitle("Control de Acceso - NLG")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// 2. Procesa el DNI
+function procesarDni(dni) {
+  Logger.log('=== NUEVA VERSION - procesarDni: ' + dni + ' ===');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hojaSocios = ss.getSheetByName("Socios"); 
+  
+  var hojaAsistencias = ss.getSheetByName("Asistencias");
+  if (!hojaAsistencias) {
+    hojaAsistencias = ss.insertSheet("Asistencias");
+    hojaAsistencias.appendRow(["Fecha y Hora", "DNI", "Socio", "Estado en Sistema"]);
+  }
+  
+  if (!dni) return { estatus: "error", mensaje: "Por favor, ingresa un DNI." };
+  
+  var datosSocios = hojaSocios.getDataRange().getValues();
+  
+  var colDni = 0;         
+  var colNombre = 1;      
+  var colApellido = 2;    
+  var colVencimiento = 3; 
+  
+  var socioEncontrado = false;
+  var nombreCompleto = "";
+  var fechaVencimiento = null;
+  
+  for (var i = 1; i < datosSocios.length; i++) {
+    var dniCelda = datosSocios[i][colDni] ? datosSocios[i][colDni].toString().trim() : "";
+    if (dniCelda === dni.trim()) {
+      socioEncontrado = true;
+      nombreCompleto = datosSocios[i][colNombre] + " " + datosSocios[i][colApellido];
+      fechaVencimiento = datosSocios[i][colVencimiento];
+      break;
+    }
+  }
+  
+  if (socioEncontrado) {
+    var hoy = new Date();
+    hoy.setHours(0,0,0,0);
+    var estadoCuota = "AL DIA";
+    var textoVencimiento = "Sin fecha";
+    
+    if (fechaVencimiento) {
+      var fechaVenDate = new Date(fechaVencimiento);
+      fechaVenDate.setMinutes(fechaVenDate.getMinutes() + fechaVenDate.getTimezoneOffset());
+      
+      var dia = String(fechaVenDate.getDate()).padStart(2, '0');
+      var mes = String(fechaVenDate.getMonth() + 1).padStart(2, '0');
+      var anio = fechaVenDate.getFullYear();
+      textoVencimiento = dia + "/" + mes + "/" + anio;
+      
+      fechaVenDate.setHours(0,0,0,0);
+      if (hoy > fechaVenDate) {
+        estadoCuota = "VENCIDO";
+      }
+    }
+    
+    hojaAsistencias.appendRow([new Date(), dni, nombreCompleto, estadoCuota]);
+
+    // Sync directo a Firestore (igual que debugSync, que sabemos que funciona)
+    try {
+      var fbToken = getFirebaseToken_();
+      if (fbToken) {
+        var fbResp = UrlFetchApp.fetch(
+          'https://firestore.googleapis.com/v1/projects/new-life-app-f951c/databases/(default)/documents/ingresosActivos',
+          {
+            method: 'POST',
+            contentType: 'application/json',
+            headers: { Authorization: 'Bearer ' + fbToken },
+            payload: JSON.stringify({
+              fields: {
+                dni:       { stringValue: String(dni).trim()      },
+                nombre:    { stringValue: String(nombreCompleto)  },
+                estado:    { stringValue: String(estadoCuota)     },
+                fechaHora: { timestampValue: new Date().toISOString() },
+                activo:    { booleanValue: true }
+              }
+            }),
+            muteHttpExceptions: true
+          }
+        );
+        Logger.log('Firestore ingreso HTTP ' + fbResp.getResponseCode() + ' - ' + dni);
+      }
+    } catch(e) { Logger.log('Firestore sync error: ' + e.message); }
+
+    if (estadoCuota === "AL DIA") {
+      return { 
+        estatus: "aldia", 
+        mensaje: "¡BIENVENIDO/A, " + nombreCompleto.toUpperCase() + "!", 
+        subtexto: "Acceso Concedido • Tu cuota vence el: " + textoVencimiento 
+      };
+    } else {
+      return { 
+        estatus: "vencido", 
+        mensaje: "CUOTA VENCIDA", 
+        subtexto: nombreCompleto.toUpperCase() + " (Venció el " + textoVencimiento + ") • Pasa por recepción" 
+      };
+    }
+  } else {
+    return { estatus: "noencontrado", mensaje: "DNI NO ENCONTRADO", subtexto: "Por favor, regístrate en recepción." };
+  }
+}
+
+// 3. Diseño HTML con Logo y Fondo desde Google Drive
+function obtenerDisenoHtml() {
+  // 1. PEGA EL ID DE TU LOGO EN DRIVE:
+  var idLogoDrive = "1fCWyoN-vyKlX-zOC4M5Wm7Auz19VRL7G"; 
+  
+  // 2. PEGA EL ID DE TU FOTO DE FONDO EN DRIVE:
+  var idFotoFondoDrive = "1WoL6makSojeJYY1YkRe6OjtV2AAxDPeV"; 
+
+  // Enlaces directos generados
+  var urlLogo = "https://lh3.googleusercontent.com/d/" + idLogoDrive;
+  var urlFondo = "https://lh3.googleusercontent.com/d/" + idFotoFondoDrive;
+
+  return `<!DOCTYPE html>
+  <html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+      * { 
+        box-sizing: border-box; 
+        font-family: 'Segoe UI', Roboto, sans-serif; 
+        user-select: none; 
+        -webkit-user-select: none; 
+        touch-action: manipulation; 
+      }
+      html, body { 
+        position: fixed; 
+        top: 0; 
+        left: 0; 
+        width: 100%; 
+        height: 100%; 
+        overflow: hidden; 
+      }
+      body { 
+        margin: 0; 
+        background-color: #111; 
+        color: white; 
+        display: flex; 
+        flex-direction: column; 
+        justify-content: center; 
+        align-items: center; 
+        padding: 10px;
+        position: relative;
+      }
+
+      .bg-imagen {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-image: linear-gradient(rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0.65)), url('${urlFondo}');
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        z-index: 1;
+      }
+      
+      .contenedor { 
+        position: relative;
+        z-index: 2;
+        text-align: center; 
+        width: 100%; 
+        max-width: 360px; 
+        max-height: 95vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        background: rgba(15, 15, 15, 0.75); 
+        padding: 15px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+      }
+      
+      .logo-gym {
+        max-width: 250px !important; 
+        margin: 0 auto 8px auto !important; 
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+      }
+      h1 { font-size: 1.7rem; margin: 0 0 2px 0; color: #ffdd00; font-weight: 900; letter-spacing: 1px; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); }
+      h2 { font-size: 0.95rem; color: #e0e0e0; margin: 0 0 12px 0; font-weight: 500; text-shadow: 1px 1px 3px rgba(0,0,0,0.8); }
+      
+      #pantallaDni { 
+        width: 100%; 
+        height: 52px; 
+        font-size: 1.8rem; 
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 15, 15, 0.9); 
+        color: #ffdd00; 
+        border: 2px solid #ffdd00; 
+        border-radius: 10px; 
+        margin-bottom: 12px; 
+        font-weight: bold; 
+        letter-spacing: 2px; 
+        overflow: hidden;
+      }
+      
+      #pantallaDni.placeholder {
+        color: #777777;
+        font-weight: normal;
+      }
+      
+      .teclado { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      
+      .btn { 
+        background: rgba(45, 45, 45, 0.9); 
+        color: white; 
+        font-size: 1.6rem; 
+        font-weight: bold; 
+        padding: 14px 0; 
+        border: 1px solid rgba(255,255,255,0.15); 
+        border-radius: 10px; 
+        cursor: pointer; 
+        transition: transform 0.05s, background 0.05s; 
+        -webkit-tap-highlight-color: transparent; 
+        border-bottom: 3px solid #111111; 
+      }
+      .btn:active { 
+        background: #555555; 
+        transform: scale(0.96);
+      }
+      
+      .btn-borrar-uno { background: rgba(214, 48, 49, 0.9); border-bottom: 3px solid #b32121; font-size: 1.5rem; padding: 14px 0; }
+      .btn-borrar-uno:active { background: #ff7675; transform: scale(0.96); }
+
+      .btn-borrar-todo { background: rgba(230, 126, 34, 0.9); border-bottom: 3px solid #d35400; font-size: 1.6rem; padding: 14px 0; }
+      .btn-borrar-todo:active { background: #f39c12; transform: scale(0.96); }
+      
+      .btn-enviar { 
+        background: #2ed573; 
+        grid-column: span 3; 
+        border-bottom: 3px solid #21a855; 
+        font-size: 1.8rem;        
+        padding: 16px 0;          
+        margin-top: 5px;         
+        color: #000;
+        font-weight: 900;
+      }
+      .btn-enviar:active { background: #55efc4; transform: scale(0.98); }
+      
+      .overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; justify-content:center; align-items:center; flex-direction:column; padding: 20px; text-align:center; z-index: 10; animation: fadeIn 0.3s; }
+      
+      .overlay h2 { 
+        font-size: 2.3rem; 
+        color: white; 
+        font-weight: 900; 
+        margin: 0 0 12px 0; 
+        text-transform: uppercase; 
+        line-height: 1.2;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+      }
+      
+      .overlay p { 
+        font-size: 1.6rem; 
+        margin: 0; 
+        color: #ffffff; 
+        font-weight: 600; 
+        line-height: 1.4; 
+        text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.7);
+      }
+      
+      .bg-aldia { background-color: rgba(46, 213, 115, 0.95); display: flex; }
+      .bg-vencido { background-color: rgba(139, 0, 0, 0.95); display: flex; }
+      .bg-noencontrado { background-color: rgba(255, 165, 2, 0.95); display: flex; }
+      
+      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+  </head>
+  <body>
+
+    <div class="bg-imagen"></div>
+
+    <div class="contenedor" id="interfaz">
+      <img class="logo-gym" src="${urlLogo}">
+      <h1>NEW LIFE GYM</h1>
+      <h2>Ingresa tu DNI para ingresar</h2>
+      <div id="pantallaDni" class="placeholder">________</div>
+      
+      <div class="teclado">
+        <button class="btn" onclick="presionar('1')">1</button>
+        <button class="btn" onclick="presionar('2')">2</button>
+        <button class="btn" onclick="presionar('3')">3</button>
+        <button class="btn" onclick="presionar('4')">4</button>
+        <button class="btn" onclick="presionar('5')">5</button>
+        <button class="btn" onclick="presionar('6')">6</button>
+        <button class="btn" onclick="presionar('7')">7</button>
+        <button class="btn" onclick="presionar('8')">8</button>
+        <button class="btn" onclick="presionar('9')">9</button>
+        
+        <button class="btn btn-borrar-todo" onclick="borrarTodo()">C</button>
+        <button class="btn" onclick="presionar('0')">0</button>
+        <button class="btn btn-borrar-uno" onclick="borrarUno()">←</button>
+        
+        <button class="btn btn-enviar" onclick="enviar()">ENTRAR</button>
+      </div>
+    </div>
+
+    <div id="pantallaRespuesta" class="overlay">
+      <h2 id="resTitulo"></h2>
+      <p id="resSubtitulo"></p>
+    </div>
+
+    <script>
+      var dniActual = "";
+      var display = document.getElementById('pantallaDni');
+      var respuesta = document.getElementById('pantallaRespuesta');
+      var titulo = document.getElementById('resTitulo');
+      var subtitulo = document.getElementById('resSubtitulo');
+
+      function actualizarDisplay() {
+        if (dniActual.length === 0) {
+          display.innerText = "________";
+          display.className = "placeholder";
+        } else {
+          display.innerText = dniActual;
+          display.className = "";
+        }
+      }
+
+      function presionar(num) {
+        if (respuesta.className.indexOf('bg-') !== -1) return;
+        if (dniActual.length < 10) { 
+          dniActual += num; 
+          actualizarDisplay();
+        }
+      }
+
+      document.addEventListener('keydown', function(event) {
+        if (respuesta.className.indexOf('bg-') !== -1) return;
+        
+        if (event.key >= '0' && event.key <= '9') {
+          presionar(event.key);
+        }
+        else if (event.key === 'Backspace') {
+          borrarUno();
+        }
+        else if (event.key === 'Enter') {
+          enviar();
+        }
+      });
+      
+      function borrarUno() {
+        if (respuesta.className.indexOf('bg-') !== -1) return;
+        dniActual = dniActual.slice(0, -1);
+        actualizarDisplay();
+      }
+      
+      function borrarTodo() {
+        if (respuesta.className.indexOf('bg-') !== -1) return;
+        dniActual = "";
+        actualizarDisplay();
+      }
+      
+      function enviar() {
+        if (!dniActual || display.innerText === "Procesando...") return;
+        
+        var dniAEnviar = dniActual;
+        display.innerText = "Procesando...";
+        display.className = "";
+        
+        google.script.run.withSuccessHandler(mostrarResultado).procesarDni(dniAEnviar);
+      }
+
+      function emitirSonido(tipo) {
+        try {
+          var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          var oscillator = audioCtx.createOscillator();
+          var gainNode = audioCtx.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          
+          if (tipo === 'aldia') {
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(660, audioCtx.currentTime); 
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); 
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.25);
+          } else {
+            oscillator.type = 'sawtooth'; 
+            oscillator.frequency.setValueAtTime(150, audioCtx.currentTime); 
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.6);
+          }
+        } catch(e) {
+          console.log("El navegador bloqueó el sonido temporalmente.");
+        }
+      }
+
+      function mostrarResultado(resultado) {
+        dniActual = "";
+        actualizarDisplay();
+        respuesta.className = "overlay bg-" + resultado.estatus;
+        titulo.innerText = resultado.mensaje;
+        subtitulo.innerText = resultado.subtexto;
+        
+        if (resultado.estatus === 'aldia') {
+          emitirSonido('aldia');
+        } else {
+          emitirSonido('vencido'); 
+        }
+        
+        setTimeout(function(){
+          respuesta.className = "overlay";
+        }, 6000);
+      }
+    </script>
+  </body>
+  </html>`;
+}
+
+// ─── SINCRONIZACIÓN CON FIRESTORE ────────────────────────────────────────────
+
+function getFirebaseToken_() {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get('fb_token');
+  if (cached) return cached;
+
+  var sa = JSON.parse(
+    PropertiesService.getScriptProperties().getProperty('FIREBASE_SA')
+  );
+
+  var header = Utilities.base64EncodeWebSafe(
+    JSON.stringify({ alg: 'RS256', typ: 'JWT' })
+  ).replace(/=+$/, '');
+
+  var now = Math.floor(Date.now() / 1000);
+  var claim = Utilities.base64EncodeWebSafe(
+    JSON.stringify({
+      iss:   sa.client_email,
+      scope: 'https://www.googleapis.com/auth/datastore',
+      aud:   'https://oauth2.googleapis.com/token',
+      iat:   now,
+      exp:   now + 3600
+    })
+  ).replace(/=+$/, '');
+
+  var toSign = header + '.' + claim;
+  var sig = Utilities.base64EncodeWebSafe(
+    Utilities.computeRsaSha256Signature(toSign, sa.private_key)
+  ).replace(/=+$/, '');
+
+  var resp = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    contentType: 'application/x-www-form-urlencoded',
+    payload: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + toSign + '.' + sig,
+    muteHttpExceptions: true
+  });
+
+  var token = JSON.parse(resp.getContentText()).access_token;
+  if (token) cache.put('fb_token', token, 3500);
+  return token;
+}
+
+function isAlreadyActive_(dni, token) {
+  var cutoff = new Date(Date.now() - 75 * 60 * 1000).toISOString();
+  var url = 'https://firestore.googleapis.com/v1/projects/new-life-app-f951c'
+          + '/databases/(default)/documents:runQuery';
+  var resp = UrlFetchApp.fetch(url, {
+    method: 'POST',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + token },
+    payload: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: 'ingresosActivos' }],
+        where: {
+          compositeFilter: {
+            op: 'AND',
+            filters: [
+              { fieldFilter: { field: { fieldPath: 'dni' }, op: 'EQUAL',        value: { stringValue:   String(dni) } } },
+              { fieldFilter: { field: { fieldPath: 'fechaHora' }, op: 'GREATER_THAN', value: { timestampValue: cutoff    } } }
+            ]
+          }
+        },
+        limit: 1
+      }
+    }),
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() !== 200) return false;
+  var result = JSON.parse(resp.getContentText());
+  return result.length > 0 && !!result[0].document;
+}
+
+function syncIngresoFirestore_(dni, nombre, estado, fechaVencimientoISO) {
+  try {
+    var token = getFirebaseToken_();
+
+    // Evitar duplicados: si la persona ya tiene ingreso activo en los últimos 75 min, no registrar
+    if (isAlreadyActive_(dni, token)) return;
+
+    var base = 'https://firestore.googleapis.com/v1/projects/new-life-app-f951c'
+             + '/databases/(default)/documents';
+    var nowISO = new Date().toISOString();
+
+    // 1. Registrar el ingreso en ingresosActivos (historial)
+    UrlFetchApp.fetch(base + '/ingresosActivos', {
+      method: 'POST',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({
+        fields: {
+          dni:       { stringValue: String(dni)    },
+          nombre:    { stringValue: String(nombre) },
+          estado:    { stringValue: String(estado) },
+          fechaHora: { timestampValue: nowISO },
+          activo:    { booleanValue: true }
+        }
+      }),
+      muteHttpExceptions: true
+    });
+
+    // 2. Actualizar/crear el documento del socio con su estado de cuota actual
+    var fechaVenField = fechaVencimientoISO
+      ? { timestampValue: fechaVencimientoISO }
+      : { nullValue: null };
+
+    UrlFetchApp.fetch(base + '/socios/' + String(dni).trim(), {
+      method: 'PATCH',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({
+        fields: {
+          dni:              { stringValue: String(dni)    },
+          nombre:           { stringValue: String(nombre) },
+          estado:           { stringValue: String(estado) },
+          fechaVencimiento: fechaVenField,
+          ultimaVisita:     { timestampValue: nowISO }
+        }
+      }),
+      muteHttpExceptions: true
+    });
+
+  } catch (e) {
+    console.error('Firestore sync error: ' + e.message);
+  }
+}
+
+function debugSync() {
+  var token = getFirebaseToken_();
+  if (!token) throw new Error('TOKEN NULO: revisar propiedad FIREBASE_SA');
+
+  var url = 'https://firestore.googleapis.com/v1/projects/new-life-app-f951c'
+          + '/databases/(default)/documents/ingresosActivos';
+  var resp = UrlFetchApp.fetch(url, {
+    method: 'POST',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + token },
+    payload: JSON.stringify({
+      fields: {
+        dni:       { stringValue: '00000000'   },
+        nombre:    { stringValue: 'Test Debug' },
+        estado:    { stringValue: 'test'       },
+        fechaHora: { timestampValue: new Date().toISOString() },
+        activo:    { booleanValue: true }
+      }
+    }),
+    muteHttpExceptions: true
+  });
+
+  var code = resp.getResponseCode();
+  var body = resp.getContentText();
+  if (code !== 200) throw new Error('Firestore HTTP ' + code + ': ' + body);
+  // Si llega acá: escribió correctamente en Firestore
+}
+
+// ─── SINCRONIZACIÓN MASIVA: corre una sola vez desde el editor ───────────────
+// Lee TODOS los socios del Excel y los sube a Firestore colección "socios".
+// Después de correrlo, la app muestra el estado de cuota de cada uno.
+function syncTodosLosSocios() {
+  var ss        = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja      = ss.getSheetByName('Socios');
+  var datos     = hoja.getDataRange().getValues();
+  var token     = getFirebaseToken_();
+  var projectId = 'new-life-app-f951c';
+  var dbPath    = 'projects/' + projectId + '/databases/(default)/documents';
+  var commitUrl = 'https://firestore.googleapis.com/v1/' + dbPath + ':commit';
+
+  var hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  var writes = [];
+  var total  = 0;
+
+  for (var i = 1; i < datos.length; i++) {
+    var dni      = datos[i][0] ? String(datos[i][0]).trim() : '';
+    var nombre   = datos[i][1] ? String(datos[i][1]).trim() : '';
+    var apellido = datos[i][2] ? String(datos[i][2]).trim() : '';
+    var fechaVen = datos[i][3];
+    if (!dni) continue;
+
+    var nombreCompleto = (nombre + ' ' + apellido).trim();
+    var estado         = 'AL DIA';
+    var fechaVenField  = { nullValue: null };
+
+    if (fechaVen) {
+      var fv = new Date(fechaVen);
+      fv.setMinutes(fv.getMinutes() + fv.getTimezoneOffset());
+      fv.setHours(0, 0, 0, 0);
+      fechaVenField = { timestampValue: fv.toISOString() };
+      if (hoy > fv) estado = 'VENCIDO';
+    }
+
+    writes.push({
+      update: {
+        name: dbPath + '/socios/' + dni,
+        fields: {
+          dni:              { stringValue: dni             },
+          nombre:           { stringValue: nombreCompleto  },
+          estado:           { stringValue: estado          },
+          fechaVencimiento: fechaVenField,
+          ultimaVisita:     { nullValue: null              }
+        }
+      }
+    });
+    total++;
+
+    // Firestore acepta máximo 500 operaciones por batch
+    if (writes.length === 500) {
+      var r = UrlFetchApp.fetch(commitUrl, {
+        method: 'POST', contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + token },
+        payload: JSON.stringify({ writes: writes }),
+        muteHttpExceptions: true
+      });
+      if (r.getResponseCode() !== 200) throw new Error('Batch error: ' + r.getContentText());
+      writes = [];
+    }
+  }
+
+  if (writes.length > 0) {
+    var res = UrlFetchApp.fetch(commitUrl, {
+      method: 'POST', contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({ writes: writes }),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) throw new Error('Batch error: ' + res.getContentText());
+  }
+
+  throw new Error('OK - ' + total + ' socios sincronizados a Firestore');
+}
+
+// ── SYNC MASIVO v2: usa PATCH individual (más confiable que batch) ────────────
+// Correr UNA VEZ desde el editor para subir todo el Excel a Firestore.
+// Ver → Registros para ver el resultado.
+function syncTodosLosSociosV2() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja  = ss.getSheetByName('Socios');
+  if (!hoja) { Logger.log('ERROR: No existe la hoja "Socios"'); return; }
+
+  var datos = hoja.getDataRange().getValues();
+  var token = getFirebaseToken_();
+  if (!token) { Logger.log('ERROR: No se pudo obtener el token'); return; }
+
+  var base = 'https://firestore.googleapis.com/v1/projects/new-life-app-f951c'
+           + '/databases/(default)/documents/socios/';
+  var maskParams = 'updateMask.fieldPaths=dni'
+    + '&updateMask.fieldPaths=nombre'
+    + '&updateMask.fieldPaths=estado'
+    + '&updateMask.fieldPaths=fechaVencimiento';
+  var hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  var ok = 0; var err = 0;
+
+  for (var i = 1; i < datos.length; i++) {
+    var dni      = datos[i][0] ? String(datos[i][0]).trim() : '';
+    var nombre   = datos[i][1] ? String(datos[i][1]).trim() : '';
+    var apellido = datos[i][2] ? String(datos[i][2]).trim() : '';
+    var fechaVen = datos[i][3];
+    if (!dni) continue;
+
+    var nombreCompleto = (nombre + ' ' + apellido).trim();
+    var estado = 'AL DIA';
+    var fechaVenField = { nullValue: null };
+
+    if (fechaVen) {
+      var fv = new Date(fechaVen);
+      fv.setMinutes(fv.getMinutes() + fv.getTimezoneOffset());
+      fv.setHours(0, 0, 0, 0);
+      fechaVenField = { timestampValue: fv.toISOString() };
+      if (hoy > fv) estado = 'VENCIDO';
+    }
+
+    var resp = UrlFetchApp.fetch(base + dni + '?' + maskParams, {
+      method: 'PATCH',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({
+        fields: {
+          dni:              { stringValue: dni            },
+          nombre:           { stringValue: nombreCompleto },
+          estado:           { stringValue: estado         },
+          fechaVencimiento: fechaVenField
+        }
+      }),
+      muteHttpExceptions: true
+    });
+
+    if (resp.getResponseCode() === 200) {
+      ok++;
+    } else {
+      err++;
+      Logger.log('Error en DNI ' + dni + ': ' + resp.getContentText());
+    }
+  }
+
+  Logger.log('COMPLETADO: ' + ok + ' sincronizados, ' + err + ' errores');
+}
+
+// ── AUTO-SYNC: se dispara solo cuando editás la hoja Socios ──────────────────
+// Configurar como trigger:
+//   Triggers (reloj) → + Agregar trigger → Función: onSocioEditado
+//   → Fuente: Desde hoja de cálculo → Evento: Al editar → Guardar
+function onSocioEditado(e) {
+  try {
+    if (e.source.getActiveSheet().getName() !== 'Socios') return;
+    var fila = e.range.getRow();
+    if (fila < 2) return;
+
+    var datos    = e.source.getActiveSheet().getRange(fila, 1, 1, 4).getValues()[0];
+    var dni      = datos[0] ? String(datos[0]).trim() : '';
+    var nombre   = datos[1] ? String(datos[1]).trim() : '';
+    var apellido = datos[2] ? String(datos[2]).trim() : '';
+    var fechaVen = datos[3];
+    if (!dni || !nombre) return;
+
+    var token = getFirebaseToken_();
+    if (!token) return;
+
+    var nombreCompleto = (nombre + ' ' + apellido).trim();
+    var hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    var estado = 'AL DIA';
+    var fechaVenField = { nullValue: null };
+
+    if (fechaVen) {
+      var fv = new Date(fechaVen);
+      fv.setMinutes(fv.getMinutes() + fv.getTimezoneOffset());
+      fv.setHours(0, 0, 0, 0);
+      fechaVenField = { timestampValue: fv.toISOString() };
+      if (hoy > fv) estado = 'VENCIDO';
+    }
+
+    var base = 'https://firestore.googleapis.com/v1/projects/new-life-app-f951c'
+             + '/databases/(default)/documents/socios/';
+    var maskParams = 'updateMask.fieldPaths=dni'
+      + '&updateMask.fieldPaths=nombre'
+      + '&updateMask.fieldPaths=estado'
+      + '&updateMask.fieldPaths=fechaVencimiento';
+
+    UrlFetchApp.fetch(base + dni + '?' + maskParams, {
+      method: 'PATCH',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({
+        fields: {
+          dni:              { stringValue: dni            },
+          nombre:           { stringValue: nombreCompleto },
+          estado:           { stringValue: estado         },
+          fechaVencimiento: fechaVenField
+        }
+      }),
+      muteHttpExceptions: true
+    });
+  } catch (err) {
+    Logger.log('Error en onSocioEditado: ' + err.message);
+  }
+}
+
+// ── EDICIÓN DESDE LA APP ────────────────────────────────────────────────────
+// Recibe POST con { originalDni, nombre, dni, fechaVencimiento } desde la app
+// y actualiza la fila correspondiente en la hoja "Socios".
+//
+// Para activarlo (una sola vez):
+//   Implementar → Nueva implementación → Aplicación web
+//   Ejecutar como: Yo  |  Acceso: Cualquier usuario (anónimo) → Implementar
+//   Copiá la URL y pegala en SHEETS_SYNC_URL de src/services/gymService.js
+function doPost(e) {
+  try {
+    var data            = JSON.parse(e.postData.contents);
+    var originalDni     = String(data.originalDni || '').trim();
+    var nuevoNombre     = String(data.nombre       || '').trim();
+    var nuevoDni        = String(data.dni          || '').trim();
+    var fechaVencISO    = data.fechaVencimiento    || null;
+
+    var ss   = SpreadsheetApp.getActiveSpreadsheet();
+    var hoja = ss.getSheetByName('Socios');
+    if (!hoja) return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: 'Hoja no encontrada' }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+    var valores = hoja.getDataRange().getValues();
+    var fila = -1;
+    for (var i = 1; i < valores.length; i++) {
+      if (String(valores[i][0]).trim() === originalDni) { fila = i + 1; break; }
+    }
+    if (fila === -1) return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: 'DNI no encontrado: ' + originalDni }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+    // Separar nombre completo en Nombre + Apellido (primera palabra / resto)
+    var partes   = nuevoNombre.split(' ');
+    var nombre   = partes[0] || '';
+    var apellido = partes.slice(1).join(' ');
+
+    hoja.getRange(fila, 1).setValue(nuevoDni);
+    hoja.getRange(fila, 2).setValue(nombre);
+    hoja.getRange(fila, 3).setValue(apellido);
+    if (fechaVencISO) {
+      hoja.getRange(fila, 4).setValue(new Date(fechaVencISO));
+    } else {
+      hoja.getRange(fila, 4).clearContent();
+    }
+
+    Logger.log('doPost: actualizado DNI ' + originalDni + ' → ' + nuevoDni + ' / ' + nuevoNombre);
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    Logger.log('doPost error: ' + err.message);
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
