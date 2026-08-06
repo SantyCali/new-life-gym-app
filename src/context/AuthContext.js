@@ -1,34 +1,41 @@
-import React, { createContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useEffect, useState, useCallback } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 import {
   registerWithEmail,
   loginWithEmail,
   logout as logoutService,
 } from '../services/authService';
 
-const TRAINER_EMAILS = ['santipiedrabuena@gmail.com'];
-
 export const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  // `initializing`: true hasta que Firebase resuelve la sesión persistida
-  // (AsyncStorage) por primera vez. Sirve para mostrar un splash/loader
-  // y evitar parpadeos entre pantallas de login/app.
+  const [user, setUser]           = useState(null);
+  const [isTrainer, setIsTrainer] = useState(false);
   const [initializing, setInitializing] = useState(true);
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState(null);
+  const [authLoading, setAuthLoading]   = useState(false);
+  const [authError, setAuthError]       = useState(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          const rol  = snap.exists() ? (snap.data().rol ?? 'usuario') : 'usuario';
+          setIsTrainer(rol === 'entrenador');
+        } catch {
+          setIsTrainer(false);
+        }
+      } else {
+        setIsTrainer(false);
+      }
       setUser(firebaseUser);
       setInitializing(false);
     });
     return unsubscribe;
   }, []);
 
-  // `profile`: { nombre, apellido, edad, peso, altura, objetivo }
   const signUp = useCallback(async (email, password, profile) => {
     setAuthError(null);
     setAuthLoading(true);
@@ -73,7 +80,7 @@ export function AuthProvider({ children }) {
   const value = {
     user,
     isAuthenticated: !!user,
-    isTrainer: TRAINER_EMAILS.includes(user?.email ?? ''),
+    isTrainer,
     initializing,
     authLoading,
     authError,
