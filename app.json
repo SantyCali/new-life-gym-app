@@ -25,8 +25,7 @@
         "backgroundColor": "#0A0A0A"
       },
       "package": "com.newlife.app",
-      "softwareKeyboardLayoutMode": "pan",
-      "minSdkVersion": 26
+      "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
       "bundler": "metro",
@@ -42,7 +41,15 @@
           "motionPermission": "Necesitamos acceso al sensor de movimiento para contar tus pasos diarios."
         }
       ],
-      "react-native-health-connect"
+      "react-native-health-connect",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {
