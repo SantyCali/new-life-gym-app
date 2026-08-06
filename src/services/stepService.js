@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export const HC_STATUS = {
   NOT_ANDROID:    'not_android',
   AVAILABLE:      'available',
+  NOT_AUTHORIZED: 'not_authorized', // HC installed but Steps permission not granted
   NOT_INSTALLED:  'not_installed',
   NEEDS_UPDATE:   'needs_update',
   UNKNOWN:        'unknown',
@@ -69,6 +70,18 @@ export async function getHCStatus() {
   }
 }
 
+// Check if Steps read permission is ALREADY granted — no dialog, safe to call on startup
+export async function checkHCPermissions() {
+  if (Platform.OS !== 'android') return false;
+  try {
+    const { getGrantedPermissions } = require('react-native-health-connect');
+    const granted = await getGrantedPermissions();
+    return granted.some(g => g.recordType === 'Steps' && g.accessType === 'read');
+  } catch {
+    return false;
+  }
+}
+
 // Open Play Store to Health Connect install/update page
 export function openHealthConnectInstall() {
   Linking.openURL('market://details?id=com.google.android.apps.healthdata').catch(() =>
@@ -76,8 +89,8 @@ export function openHealthConnectInstall() {
   );
 }
 
-let _hcInitialized = false;
-
+// Request permission — ONLY call this from an explicit user action (button tap).
+// Calling it on startup crashes on some devices. Use checkHCPermissions() for startup checks.
 export async function initHealthConnect() {
   if (Platform.OS !== 'android') return false;
   try {
@@ -95,8 +108,7 @@ export async function initHealthConnect() {
     const grants = await requestPermission([
       { accessType: 'read', recordType: 'Steps' },
     ]);
-    _hcInitialized = grants.some(g => g.recordType === 'Steps');
-    return _hcInitialized;
+    return grants.some(g => g.recordType === 'Steps' && g.accessType === 'read');
   } catch {
     return false;
   }

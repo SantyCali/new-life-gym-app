@@ -34,7 +34,7 @@ function computeAge(fechaNacimiento) {
 }
 
 export function StepProvider({ children }) {
-  const { steps, available, loading, hcStatus } = useSteps();
+  const { steps, available, loading, hcStatus, connectHC } = useSteps();
   const { user }    = useAuth();
   const { profile } = useUserProfile();
 
@@ -196,6 +196,7 @@ export function StepProvider({ children }) {
     available,
     loading,
     hcStatus,
+    connectHealthConnect: connectHC,
     installHealthConnect: openHealthConnectInstall,
     goal:    DEFAULT_GOAL,
     percent: Math.min(100, Math.round((steps / DEFAULT_GOAL) * 100)),

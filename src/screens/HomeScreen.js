@@ -43,7 +43,7 @@ export default function HomeScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, isTrainer } = useAuth();
   const { profile } = useUserProfile();
-  const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect } = useStepContext();
+  const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect } = useStepContext();
   const totalMonedas = profile?.monedas ?? 0;
   const weightKgHome = profile?.peso ? Number(profile.peso) : 70;
 
@@ -347,6 +347,7 @@ export default function HomeScreen({ navigation }) {
         <HealthConnectBanner
           hcStatus={hcStatus}
           onInstall={installHealthConnect}
+          onConnect={connectHealthConnect}
           colors={colors}
         />
 

@@ -3,12 +3,31 @@ import { Ionicons } from '@expo/vector-icons';
 import { HC_STATUS } from '../../services/stepService';
 import { spacing, typography, radius } from '../../theme';
 
-export default function HealthConnectBanner({ hcStatus, onInstall, colors }) {
-  if (hcStatus === HC_STATUS.NOT_ANDROID || hcStatus === HC_STATUS.AVAILABLE || hcStatus === HC_STATUS.UNKNOWN) {
+export default function HealthConnectBanner({ hcStatus, onInstall, onConnect, colors }) {
+  if (
+    hcStatus === HC_STATUS.NOT_ANDROID ||
+    hcStatus === HC_STATUS.AVAILABLE   ||
+    hcStatus === HC_STATUS.UNKNOWN
+  ) {
     return null;
   }
 
-  const isUpdate = hcStatus === HC_STATUS.NEEDS_UPDATE;
+  const isUpdate  = hcStatus === HC_STATUS.NEEDS_UPDATE;
+  const isConnect = hcStatus === HC_STATUS.NOT_AUTHORIZED;
+
+  const title = isUpdate  ? 'Actualizá Health Connect'
+              : isConnect ? 'Conectá Health Connect'
+              :             'Mejorá el contador de pasos';
+
+  const subtitle = isUpdate  ? 'Una actualización de Health Connect está disponible para mejorar la precisión.'
+                 : isConnect ? 'Otorgá el permiso de pasos para contar desde las 00:00, aunque no hayas abierto la app.'
+                 :             'Con Health Connect contamos los pasos desde las 00:00, aunque no hayas abierto la app.';
+
+  const btnLabel = isUpdate  ? 'Actualizar'
+                 : isConnect ? 'Conectar'
+                 :             'Instalar';
+
+  const handlePress = isConnect ? onConnect : onInstall;
 
   return (
     <View style={[styles.banner, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
@@ -16,23 +35,15 @@ export default function HealthConnectBanner({ hcStatus, onInstall, colors }) {
         <Ionicons name="footsteps-outline" size={20} color={colors.primary} />
       </View>
       <View style={styles.body}>
-        <Text style={[styles.title, { color: colors.text }]}>
-          {isUpdate ? 'Actualizá Health Connect' : 'Mejorá el contador de pasos'}
-        </Text>
-        <Text style={[styles.sub, { color: colors.textSecondary }]}>
-          {isUpdate
-            ? 'Una actualización de Health Connect está disponible para mejorar la precisión.'
-            : 'Con Health Connect contamos los pasos desde las 00:00, aunque no hayas abierto la app.'}
-        </Text>
+        <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+        <Text style={[styles.sub, { color: colors.textSecondary }]}>{subtitle}</Text>
       </View>
       <TouchableOpacity
         style={[styles.btn, { backgroundColor: colors.primary }]}
-        onPress={onInstall}
+        onPress={handlePress}
         activeOpacity={0.8}
       >
-        <Text style={[styles.btnText, { color: colors.textInverse }]}>
-          {isUpdate ? 'Actualizar' : 'Instalar'}
-        </Text>
+        <Text style={[styles.btnText, { color: colors.textInverse }]}>{btnLabel}</Text>
       </TouchableOpacity>
     </View>
   );

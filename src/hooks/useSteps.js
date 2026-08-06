@@ -5,6 +5,7 @@ import {
   getStepsSinceMidnight,
   watchStepCount,
   getHCStatus,
+  checkHCPermissions,
   initHealthConnect,
   getStepsFromHC,
   loadStepData,
@@ -131,23 +132,27 @@ export default function useSteps() {
       }
       setLoading(false);
 
-      // Check HC status and start the right path
+      // Check HC status — never call requestPermission automatically on startup
       const status = await getHCStatus();
       if (!mountedRef.current) return;
-      setHcStatus(status);
 
       if (status === HC_STATUS.AVAILABLE) {
-        const granted = await initHealthConnect();
-        if (granted) {
+        // Only start HC path if permission was ALREADY granted (no dialog)
+        const alreadyGranted = await checkHCPermissions();
+        if (!mountedRef.current) return;
+        if (alreadyGranted) {
+          setHcStatus(HC_STATUS.AVAILABLE);
           await startHCPath();
         } else {
+          setHcStatus(HC_STATUS.NOT_AUTHORIZED);
           startFallbackPath();
         }
       } else {
+        setHcStatus(status);
         startFallbackPath();
       }
 
-      // On foreground: re-sync data AND check if HC was just installed
+      // On foreground: re-sync data AND check if HC was just installed/authorized
       appStateSub = AppState.addEventListener('change', async (state) => {
         if (state !== 'active' || !mountedRef.current) return;
 
@@ -155,18 +160,22 @@ export default function useSteps() {
           // Already on HC path: just refresh
           refreshFromHC();
         } else {
-          // On fallback: check if HC became available since last check
-          saveStepData(dataRef.current); // persist before checking
+          // On fallback: check if HC became available or permissions granted since last check
+          saveStepData(dataRef.current);
           const newStatus = await getHCStatus();
           if (!mountedRef.current) return;
-          setHcStatus(newStatus);
 
           if (newStatus === HC_STATUS.AVAILABLE) {
-            const granted = await initHealthConnect();
-            if (granted) {
-              // Transition to HC — no data is lost; HC has authoritative history
+            const alreadyGranted = await checkHCPermissions();
+            if (!mountedRef.current) return;
+            if (alreadyGranted) {
+              setHcStatus(HC_STATUS.AVAILABLE);
               await startHCPath();
+            } else {
+              setHcStatus(HC_STATUS.NOT_AUTHORIZED);
             }
+          } else {
+            setHcStatus(newStatus);
           }
         }
       });
@@ -222,5 +231,16 @@ export default function useSteps() {
     };
   }, [refreshIOS, refreshFromHC, startHCPath, startFallbackPath]);
 
-  return { steps, available, loading, hcStatus };
+  // Called ONLY from explicit user action (button tap) — opens the permission dialog
+  const connectHC = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
+    const granted = await initHealthConnect();
+    if (!mountedRef.current) return;
+    if (granted) {
+      setHcStatus(HC_STATUS.AVAILABLE);
+      await startHCPath();
+    }
+  }, [startHCPath]);
+
+  return { steps, available, loading, hcStatus, connectHC };
 }
