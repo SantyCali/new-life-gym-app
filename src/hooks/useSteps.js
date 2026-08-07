@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Platform, AppState } from 'react-native';
+import { Platform, AppState, Alert } from 'react-native';
 import {
   isPedometerAvailable,
   getStepsSinceMidnight,
@@ -7,6 +7,8 @@ import {
   getHCStatus,
   checkHCPermissions,
   initHealthConnect,
+  isMIUIDevice,
+  openHealthConnectPermissions,
   getStepsFromHC,
   loadStepData,
   saveStepData,
@@ -231,9 +233,24 @@ export default function useSteps() {
     };
   }, [refreshIOS, refreshFromHC, startHCPath, startFallbackPath]);
 
-  // Called ONLY from explicit user action (button tap) — opens the permission dialog
+  // Called ONLY from explicit user action (button tap) — opens the permission dialog.
+  // On MIUI (Xiaomi) requestPermission crashes the app, so we open Health Connect
+  // directly and let the AppState listener pick up the granted permission on return.
   const connectHC = useCallback(async () => {
     if (Platform.OS !== 'android') return;
+
+    if (isMIUIDevice()) {
+      Alert.alert(
+        'Activar Health Connect',
+        'Se va a abrir la app de Health Connect. Buscá "New Life" en la lista y activá el permiso de Pasos. Cuando vuelvas, la app lo detecta sola.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Abrir Health Connect', onPress: openHealthConnectPermissions },
+        ]
+      );
+      return;
+    }
+
     const granted = await initHealthConnect();
     if (!mountedRef.current) return;
     if (granted) {

@@ -82,6 +82,26 @@ export async function checkHCPermissions() {
   }
 }
 
+// Xiaomi/MIUI devices crash when requestPermission opens its dialog.
+// Detect by manufacturer so we use the manual-grant flow instead.
+export function isMIUIDevice() {
+  if (Platform.OS !== 'android') return false;
+  const mfr = (Platform.constants?.Manufacturer ?? '').toLowerCase();
+  return mfr === 'xiaomi';
+}
+
+// Open the Health Connect app so the user can grant permissions manually.
+// Falls back to Play Store if HC app can't be opened.
+export function openHealthConnectPermissions() {
+  if (Platform.OS !== 'android') return;
+  try {
+    const { openHealthConnectSettings } = require('react-native-health-connect');
+    openHealthConnectSettings();
+  } catch {
+    openHealthConnectInstall();
+  }
+}
+
 // Open Play Store to Health Connect install/update page
 export function openHealthConnectInstall() {
   Linking.openURL('market://details?id=com.google.android.apps.healthdata').catch(() =>
