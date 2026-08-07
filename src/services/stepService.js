@@ -40,6 +40,14 @@ export function midnightToday() {
 
 // ── iOS: expo-sensors CMPedometer ─────────────────────────────────────────────
 
+// Request motion/activity permission before using the pedometer (Android 10+ requires it)
+export async function requestPedometerPermission() {
+  try {
+    const { status } = await Pedometer.requestPermissionsAsync();
+    return status === 'granted';
+  } catch { return true; } // iOS doesn't need explicit request here
+}
+
 export async function isPedometerAvailable() {
   try { return await Pedometer.isAvailableAsync(); } catch { return false; }
 }

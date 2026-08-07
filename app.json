@@ -22,7 +22,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0A0A0A"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1B4EA8"
       },
       "package": "com.newlife.app",
       "softwareKeyboardLayoutMode": "pan"

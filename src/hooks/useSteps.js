@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Platform, AppState, Alert } from 'react-native';
 import {
+  requestPedometerPermission,
   isPedometerAvailable,
   getStepsSinceMidnight,
   watchStepCount,
@@ -108,6 +109,9 @@ export default function useSteps() {
     let appStateSub;
 
     async function init() {
+      // Ask for motion/activity permission upfront (required on Android 10+)
+      await requestPedometerPermission();
+
       const ok = await isPedometerAvailable();
       if (!mountedRef.current) return;
       setAvailable(ok);
