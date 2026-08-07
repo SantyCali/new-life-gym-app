@@ -714,7 +714,7 @@ export default function GymScreen({ navigation }) {
 
       {/* Trainer buttons */}
       {isTrainer && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
           <View style={styles.footerRow}>
             <TouchableOpacity
               style={[styles.footerSecBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
