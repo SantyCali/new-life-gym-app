@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { subscribeToGymCheckins } from '../services/gymService';
 
-const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_HOUR_MS = 90 * 60 * 1000; // 1 h 30 min
 
 export default function useGymCheckins() {
   const [all, setAll]         = useState([]);

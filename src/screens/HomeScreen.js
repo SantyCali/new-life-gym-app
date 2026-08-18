@@ -32,6 +32,7 @@ import { MUSCLE_GROUPS } from '../constants/exercises';
 import { useStepContext } from '../context/StepContext';
 import HealthConnectBanner from '../components/ui/HealthConnectBanner';
 import { fetchWeeklyStepHistory } from '../services/userService';
+import useGymCheckins from '../hooks/useGymCheckins';
 
 const DAY_ABBR = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
 
@@ -44,6 +45,7 @@ export default function HomeScreen({ navigation }) {
   const { user, isTrainer } = useAuth();
   const { profile } = useUserProfile();
   const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect } = useStepContext();
+  const { activeCount: gymCount } = useGymCheckins();
   const totalMonedas = profile?.monedas ?? 0;
   const weightKgHome = profile?.peso ? Number(profile.peso) : 70;
 
@@ -411,6 +413,22 @@ export default function HomeScreen({ navigation }) {
           />
         </View>
 
+        {/* ── Gym en vivo ── */}
+        <TouchableOpacity
+          activeOpacity={0.82}
+          onPress={() => navigation.navigate('Gym')}
+          style={[styles.gymCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        >
+          <View style={[styles.gymCircle, { backgroundColor: gymStatusColor(gymCount) + '22', borderColor: gymStatusColor(gymCount) }]}>
+            <Text style={[styles.gymCircleCount, { color: gymStatusColor(gymCount) }]}>{gymCount}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.gymCardTitle, { color: colors.text }]}>En el gym ahora</Text>
+            <Text style={[styles.gymCardSub, { color: colors.textSecondary }]}>{gymStatusLabel(gymCount)}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+
         {/* ── Entrenamiento de hoy ── */}
         <View style={styles.sectionHeader}>
           <View style={{ gap: 3 }}>
@@ -476,6 +494,21 @@ export default function HomeScreen({ navigation }) {
     </SafeAreaView>
     </Animated.View>
   );
+}
+
+function gymStatusColor(count) {
+  if (count === 0) return '#9CA3AF';
+  if (count <= 5)  return '#22C55E';
+  if (count <= 15) return '#F59E0B';
+  return '#EF4444';
+}
+
+function gymStatusLabel(count) {
+  if (count === 0) return 'Sin gente por ahora';
+  if (count === 1) return '1 persona';
+  if (count <= 5)  return `${count} personas · Tranquilo`;
+  if (count <= 15) return `${count} personas · Moderado`;
+  return `${count} personas · Lleno`;
 }
 
 function StatCard({ icon, value, unit, label, iconColor, highlighted, highlightColor }) {
@@ -783,6 +816,35 @@ function makeStyles(colors) { return StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     marginBottom: spacing.xl,
+  },
+  gymCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    padding: spacing.lg,
+    marginBottom: spacing.xl,
+    gap: spacing.md,
+  },
+  gymCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gymCircleCount: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.black,
+  },
+  gymCardTitle: {
+    fontSize: typography.sizes.base,
+    fontWeight: typography.weights.semibold,
+    marginBottom: 2,
+  },
+  gymCardSub: {
+    fontSize: typography.sizes.sm,
   },
   statCard: {
     flex: 1,

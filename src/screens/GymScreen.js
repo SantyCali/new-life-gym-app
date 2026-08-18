@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, ScrollView,
-  Modal, Platform, TextInput, RefreshControl,
+  Modal, Platform, TextInput, RefreshControl, Keyboard,
   Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,33 +11,46 @@ import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
 import useAuth from '../hooks/useAuth';
 import useGymCheckins from '../hooks/useGymCheckins';
-import { addCheckin, removeCheckin, getTodayHistory, getSociosQuotaStatus, getCheckinAnalytics, getAllSocios, updateSocio } from '../services/gymService';
+import { addCheckin, removeCheckin, getTodayHistory, getSociosQuotaStatus, getCheckinAnalytics, getAllSocios, updateSocio, addSocio, deleteSocio } from '../services/gymService';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 const PEAK_HOURS   = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22];
 const DAY_LABELS   = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 const BAR_MAX_H    = 90; // px — altura máxima de la barra
 
-function MiniBarChart({ values, labels, peakIndex, colors, styles }) {
+function MiniBarChart({ values, labels, peakIndex, selectedIndex, onBarPress, colors, styles }) {
   const max = Math.max(...values, 1);
   return (
     <View style={[styles.analyticsChart, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
       {values.map((val, i) => {
-        const barH   = Math.round((val / max) * BAR_MAX_H);
-        const isPeak = i === peakIndex && val > 0;
+        const barH      = Math.round((val / max) * BAR_MAX_H);
+        const isSelected = selectedIndex === i;
+        const isPeak    = i === peakIndex && val > 0 && selectedIndex === undefined;
+        const highlight  = isSelected || isPeak;
         return (
-          <View key={i} style={styles.analyticsBarCol}>
-            <Text style={[styles.analyticsBarVal, { color: isPeak ? colors.primary : colors.textTertiary }]}>
+          <TouchableOpacity
+            key={i}
+            style={styles.analyticsBarCol}
+            onPress={() => onBarPress?.(i)}
+            activeOpacity={onBarPress ? 0.65 : 1}
+            disabled={!onBarPress}
+          >
+            <Text style={[styles.analyticsBarVal, { color: highlight ? colors.primary : colors.textTertiary }]}>
               {val > 0 ? val : ''}
             </Text>
             <View style={[styles.analyticsBarTrack, { backgroundColor: colors.surfaceActive, height: BAR_MAX_H }]}>
               <View style={[
                 styles.analyticsBarFill,
-                { height: Math.max(barH, val > 0 ? 3 : 0), backgroundColor: isPeak ? colors.primary : colors.primary + '55' },
+                { height: Math.max(barH, val > 0 ? 3 : 0), backgroundColor: highlight ? colors.primary : colors.primary + '55' },
               ]} />
             </View>
-            <Text style={[styles.analyticsBarLabel, { color: colors.textTertiary }]}>{labels[i]}</Text>
-          </View>
+            <Text style={[
+              styles.analyticsBarLabel,
+              { color: highlight ? colors.primary : colors.textTertiary, fontWeight: isSelected ? '700' : '400' },
+            ]}>
+              {labels[i]}
+            </Text>
+          </TouchableOpacity>
         );
       })}
     </View>
@@ -45,15 +58,33 @@ function MiniBarChart({ values, labels, peakIndex, colors, styles }) {
 }
 
 function AnalyticsChart({ data, colors, styles }) {
-  const { byHour, byDay } = data;
+  const { byHour, byDay, byDayHour } = data;
+  const [selectedDay, setSelectedDay] = useState(null);
 
-  const peakHour = byHour.indexOf(Math.max(...byHour));
+  // Resetear selección cuando cambian los datos (cambio de período)
+  useEffect(() => { setSelectedDay(null); }, [data]);
+
+  const activeHours = selectedDay !== null ? (byDayHour?.[selectedDay] ?? byHour) : byHour;
+
+  const peakHour = activeHours.indexOf(Math.max(...activeHours));
   const peakDay  = byDay.indexOf(Math.max(...byDay));
-  const total    = byHour.reduce((a, b) => a + b, 0);
+  const total    = selectedDay !== null
+    ? byDay[selectedDay]
+    : byHour.reduce((a, b) => a + b, 0);
 
-  const hourValues  = PEAK_HOURS.map(h => byHour[h] ?? 0);
+  const hourValues  = PEAK_HOURS.map(h => activeHours[h] ?? 0);
   const hourLabels  = PEAK_HOURS.map(h => h < 12 ? `${h}am` : h === 12 ? '12p' : `${h-12}pm`);
   const peakHourIdx = PEAK_HOURS.indexOf(peakHour);
+
+  const handleDayPress = useCallback((i) => {
+    setSelectedDay(prev => prev === i ? null : i);
+  }, []);
+
+  const dayLabel = selectedDay !== null ? DAY_LABELS[selectedDay] : DAY_LABELS[peakDay];
+  const dayCardLabel = selectedDay !== null ? 'Día elegido' : 'Día pico';
+  const hourTitle = selectedDay !== null
+    ? `Pico de horarios · ${DAY_LABELS[selectedDay]}`
+    : 'Pico de horarios';
 
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.xl, paddingBottom: spacing['3xl'] }} showsVerticalScrollIndicator={false}>
@@ -61,9 +92,9 @@ function AnalyticsChart({ data, colors, styles }) {
       {/* ── Resumen ── */}
       <View style={[styles.analyticsSummary, { marginBottom: spacing.xl }]}>
         {[
-          { label: 'Hora pico',  value: `${peakHour}:00 hs`,       icon: 'time-outline'        },
-          { label: 'Día pico',   value: DAY_LABELS[peakDay],        icon: 'calendar-outline'    },
-          { label: 'Total',      value: String(total),              icon: 'people-outline'      },
+          { label: 'Hora pico',   value: `${peakHour}:00 hs`, icon: 'time-outline'     },
+          { label: dayCardLabel,  value: dayLabel,             icon: 'calendar-outline' },
+          { label: 'Total',       value: String(total),        icon: 'people-outline'   },
         ].map(card => (
           <View key={card.label} style={[styles.analyticsSummaryCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
             <Ionicons name={card.icon} size={20} color={colors.primary} />
@@ -74,7 +105,7 @@ function AnalyticsChart({ data, colors, styles }) {
       </View>
 
       {/* ── Horarios ── */}
-      <Text style={[styles.analyticsSectionTitle, { color: colors.text }]}>Pico de horarios</Text>
+      <Text style={[styles.analyticsSectionTitle, { color: colors.text }]}>{hourTitle}</Text>
       <MiniBarChart
         values={hourValues}
         labels={hourLabels}
@@ -88,6 +119,8 @@ function AnalyticsChart({ data, colors, styles }) {
         values={byDay}
         labels={DAY_LABELS}
         peakIndex={peakDay}
+        selectedIndex={selectedDay}
+        onBarPress={handleDayPress}
         colors={colors} styles={styles}
       />
 
@@ -175,10 +208,12 @@ function CollapsibleSection({ section, members, colors, styles, spacing, autoOpe
     isOpen.current ? close() : open();
   }, [open, close]);
 
-  // Auto-abrir cuando hay búsqueda con resultados; auto-cerrar cuando se borra
+  // Auto-abrir cuando hay búsqueda con resultados; auto-cerrar cuando se borra.
+  // Siempre llama open() cuando autoOpen es true para actualizar la altura
+  // si members.length cambió mientras la sección ya estaba abierta.
   useEffect(() => {
-    if (autoOpen && !isOpen.current) open();
-    else if (!autoOpen && isOpen.current) close();
+    if (autoOpen) open();
+    else if (isOpen.current) close();
   }, [autoOpen, open, close]);
 
   return (
@@ -255,6 +290,30 @@ function QuotaSections({ data, search, colors, styles, spacing, refreshing, onRe
     setShowPicker(false);
   }, []);
 
+  const handleDelete = useCallback(() => {
+    if (!editSocio) return;
+    Alert.alert(
+      'Eliminar socio',
+      `¿Eliminás a ${editSocio.nombre}? Esta acción no se puede deshacer.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSocio(editSocio.id);
+              setEditSocio(null);
+              onRefresh?.();
+            } catch {
+              Alert.alert('Error', 'No se pudo eliminar el socio.');
+            }
+          },
+        },
+      ]
+    );
+  }, [editSocio, onRefresh]);
+
   const saveEdit = useCallback(async () => {
     if (!editSocio || editSaving) return;
     setEditSaving(true);
@@ -318,6 +377,7 @@ function QuotaSections({ data, search, colors, styles, spacing, refreshing, onRe
         >
           <TouchableOpacity
             activeOpacity={1}
+            onPress={Keyboard.dismiss}
             style={{
               width: '88%',
               backgroundColor: colors.surface,
@@ -327,9 +387,12 @@ function QuotaSections({ data, search, colors, styles, spacing, refreshing, onRe
               borderColor: colors.border,
             }}
           >
-            <Text style={[styles.modalTitle, { color: colors.text, marginBottom: spacing.lg }]}>
-              Editar socio
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg }}>
+              <Text style={[styles.modalTitle, { color: colors.text, flex: 1 }]}>Editar socio</Text>
+              <TouchableOpacity onPress={handleDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            </View>
 
             {/* Nombre */}
             <Text style={[styles.checkinTime, { color: colors.textSecondary, marginBottom: spacing.xs }]}>
@@ -409,7 +472,14 @@ function QuotaSections({ data, search, colors, styles, spacing, refreshing, onRe
                 value={editFecha ?? new Date()}
                 mode="date"
                 display="spinner"
-                onChange={(_, date) => { if (date) setEditFecha(date); }}
+                onChange={(event, date) => {
+                  if (Platform.OS === 'android') {
+                    setShowPicker(false);
+                    if (event.type === 'set' && date) setEditFecha(date);
+                  } else {
+                    if (date) setEditFecha(date);
+                  }
+                }}
                 locale="es-ES"
                 style={{ height: 130, marginBottom: spacing.sm }}
               />
@@ -490,8 +560,38 @@ export default function GymScreen({ navigation }) {
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [quotaSearch, setQuotaSearch]         = useState('');
 
+  const [newSocioVisible, setNewSocioVisible]       = useState(false);
+  const [newNombre, setNewNombre]                   = useState('');
+  const [newDni, setNewDni]                         = useState('');
+  const [newFecha, setNewFecha]                     = useState(null);
+  const [newShowPicker, setNewShowPicker]           = useState(false);
+  const [newSaving, setNewSaving]                   = useState(false);
+
+  const openNewSocio = useCallback(() => {
+    setNewNombre('');
+    setNewDni('');
+    setNewFecha(null);
+    setNewShowPicker(false);
+    setNewSocioVisible(true);
+  }, []);
+
+  const saveNewSocio = useCallback(async () => {
+    if (!newNombre.trim()) { Alert.alert('Falta el nombre', 'Ingresá el nombre completo del socio.'); return; }
+    if (!newDni.trim())    { Alert.alert('Falta el DNI',   'Ingresá el DNI del socio.');              return; }
+    setNewSaving(true);
+    try {
+      await addSocio({ nombre: newNombre, dni: newDni, fechaVencimiento: newFecha });
+      setNewSocioVisible(false);
+      loadQuotaData();
+    } catch (err) {
+      Alert.alert('Error', err?.message ?? 'No se pudo agregar el socio.');
+    } finally {
+      setNewSaving(false);
+    }
+  }, [newNombre, newDni, newFecha, loadQuotaData]);
+
   const [analyticsVisible, setAnalyticsVisible]   = useState(false);
-  const [analyticsData, setAnalyticsData]         = useState({ byHour: Array(24).fill(0), byDay: Array(7).fill(0) });
+  const [analyticsData, setAnalyticsData]         = useState({ byHour: Array(24).fill(0), byDay: Array(7).fill(0), byDayHour: Array(7).fill(null).map(() => Array(24).fill(0)) });
   const [analyticsRange, setAnalyticsRange]       = useState(7);
   const [analyticsLoading, setAnalyticsLoading]   = useState(false);
 
@@ -696,7 +796,7 @@ export default function GymScreen({ navigation }) {
                 {item.nombre}{item.dni ? ` · DNI ${item.dni}` : ''}
               </Text>
               <Text style={[styles.checkinTime, { color: colors.textTertiary }]}>
-                {minutesAgo(item.fechaHora)} · expira en {Math.max(0, 60 - Math.floor((Date.now() - (item.fechaHora?.toMillis?.() ?? 0)) / 60_000))} min
+                {minutesAgo(item.fechaHora)} · expira en {Math.max(0, 90 - Math.floor((Date.now() - (item.fechaHora?.toMillis?.() ?? 0)) / 60_000))} min
               </Text>
             </View>
             <TouchableOpacity
@@ -889,7 +989,13 @@ export default function GymScreen({ navigation }) {
               <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.title}>Estado de cuotas</Text>
-            <View style={{ width: 40 }} />
+            <TouchableOpacity
+              style={[styles.backBtn, { backgroundColor: colors.primaryDim12 }]}
+              onPress={openNewSocio}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="add" size={24} color={colors.primary} />
+            </TouchableOpacity>
           </View>
 
           <View style={[styles.searchWrap, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
@@ -924,6 +1030,74 @@ export default function GymScreen({ navigation }) {
               onRefresh={handleQuotaRefresh}
             />
           )}
+
+          {/* Modal agregar nuevo socio — anidado en el modal de cuotas para que iOS lo muestre sin esperar */}
+          <Modal visible={newSocioVisible} transparent animationType="fade" onRequestClose={() => setNewSocioVisible(false)}>
+            <TouchableOpacity style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => { Keyboard.dismiss(); setNewSocioVisible(false); }}>
+              <TouchableOpacity activeOpacity={1} onPress={Keyboard.dismiss} style={{ width: '88%', backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.xl, borderWidth: 1, borderColor: colors.border }}>
+                    <Text style={[styles.modalTitle, { color: colors.text, marginBottom: spacing.lg }]}>Agregar socio</Text>
+
+                    <Text style={[styles.checkinTime, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Nombre completo</Text>
+                    <TextInput
+                      style={{ color: colors.text, backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginBottom: spacing.md, fontSize: 16, minHeight: 46 }}
+                      value={newNombre}
+                      onChangeText={setNewNombre}
+                      placeholder="Nombre y apellido"
+                      placeholderTextColor={colors.textTertiary}
+                      autoCapitalize="words"
+                    />
+
+                    <Text style={[styles.checkinTime, { color: colors.textSecondary, marginBottom: spacing.xs }]}>DNI</Text>
+                    <TextInput
+                      style={{ color: colors.text, backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.md, marginBottom: spacing.md, fontSize: 16, minHeight: 46 }}
+                      value={newDni}
+                      onChangeText={setNewDni}
+                      placeholder="Número de DNI"
+                      placeholderTextColor={colors.textTertiary}
+                      keyboardType="numeric"
+                    />
+
+                    <Text style={[styles.checkinTime, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Vencimiento de cuota</Text>
+                    <TouchableOpacity
+                      onPress={() => setNewShowPicker(v => !v)}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: newShowPicker ? colors.primary : colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: spacing.sm }}
+                    >
+                      <Ionicons name="calendar-outline" size={16} color={colors.primary} style={{ marginRight: spacing.sm }} />
+                      <Text style={{ color: newFecha ? colors.text : colors.textTertiary, fontSize: 15, flex: 1 }}>
+                        {newFecha ? newFecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Sin vencimiento'}
+                      </Text>
+                      <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+                    </TouchableOpacity>
+
+                    {newShowPicker && (
+                      <DateTimePicker
+                        value={newFecha ?? new Date()}
+                        mode="date"
+                        display="spinner"
+                        onChange={(event, date) => {
+                          if (Platform.OS === 'android') {
+                            setNewShowPicker(false);
+                            if (event.type === 'set' && date) setNewFecha(date);
+                          } else {
+                            if (date) setNewFecha(date);
+                          }
+                        }}
+                        locale="es-ES"
+                        style={{ height: 130, marginBottom: spacing.sm }}
+                      />
+                    )}
+
+                    <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                      <TouchableOpacity onPress={() => setNewSocioVisible(false)} style={{ flex: 1, alignItems: 'center', paddingVertical: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border }}>
+                        <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>Cancelar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={saveNewSocio} disabled={newSaving} style={{ flex: 1, alignItems: 'center', paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.primary, opacity: newSaving ? 0.6 : 1 }}>
+                        {newSaving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Guardar</Text>}
+                      </TouchableOpacity>
+                  </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
         </View>
       </Modal>
 

@@ -1,11 +1,11 @@
 import {
-  collection, onSnapshot, addDoc, deleteDoc, doc, getDoc,
+  collection, onSnapshot, addDoc, deleteDoc, doc, getDoc, setDoc,
   serverTimestamp, query, orderBy, where, Timestamp, getDocs, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const COL = collection(db, 'ingresosActivos');
-const ACTIVE_MS = 75 * 60 * 1000; // 1 h 15 min
+const ACTIVE_MS = 90 * 60 * 1000; // 1 h 30 min
 const ACTIVE_CUTOFF = () => Timestamp.fromMillis(Date.now() - ACTIVE_MS);
 
 export function subscribeToGymCheckins(onData) {
@@ -34,6 +34,49 @@ export async function removeCheckin(id) {
 // URL del Web App de Apps Script para sincronizar ediciones al Excel.
 // Dejá vacío para saltear la sincronización hasta tener la URL.
 const SHEETS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbwsM2B2MFSzH9QHGBQnaGaDJ29CpUlhJgTrKwjetjNejrxSYu_HM8NBpH-y3rRNbiO6/exec';
+
+export async function deleteSocio(id) {
+  await deleteDoc(doc(db, 'socios', id));
+
+  if (SHEETS_SYNC_URL) {
+    try {
+      await fetch(SHEETS_SYNC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', dni: id }),
+      });
+    } catch {
+      // sync falla silenciosamente — Firestore ya está actualizado
+    }
+  }
+}
+
+export async function addSocio({ nombre, dni, fechaVencimiento }) {
+  const id = dni.trim();
+  const data = {
+    nombre: nombre.trim(),
+    dni: id,
+    fechaVencimiento: fechaVencimiento ? Timestamp.fromDate(fechaVencimiento) : null,
+  };
+  await setDoc(doc(db, 'socios', id), data);
+
+  if (SHEETS_SYNC_URL) {
+    try {
+      await fetch(SHEETS_SYNC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add',
+          nombre: data.nombre,
+          dni: id,
+          fechaVencimiento: fechaVencimiento ? fechaVencimiento.toISOString() : null,
+        }),
+      });
+    } catch {
+      // sync falla silenciosamente — Firestore ya está actualizado
+    }
+  }
+}
 
 export async function updateSocio(id, { nombre, dni, fechaVencimiento }) {
   const data = { nombre: nombre.trim(), dni: dni.trim() };
@@ -120,15 +163,19 @@ export async function getSocioByDni(dni) {
 export async function getCheckinAnalytics(days = 30) {
   const cutoff = Timestamp.fromMillis(Date.now() - days * 24 * 60 * 60 * 1000);
   const snap = await getDocs(query(COL, where('fechaHora', '>', cutoff)));
-  const byHour = Array(24).fill(0);
-  const byDay  = Array(7).fill(0); // 0=Dom, 1=Lun … 6=Sab
+  const byHour    = Array(24).fill(0);
+  const byDay     = Array(7).fill(0);
+  const byDayHour = Array(7).fill(null).map(() => Array(24).fill(0)); // [día][hora]
   snap.docs.forEach(d => {
     const date = d.data().fechaHora?.toDate?.();
     if (!date) return;
-    byHour[date.getHours()]++;
-    byDay[date.getDay()]++;
+    const h   = date.getHours();
+    const day = date.getDay();
+    byHour[h]++;
+    byDay[day]++;
+    byDayHour[day][h]++;
   });
-  return { byHour, byDay };
+  return { byHour, byDay, byDayHour };
 }
 
 export async function findUserByDni(dni) {

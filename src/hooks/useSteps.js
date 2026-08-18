@@ -87,18 +87,41 @@ export default function useSteps() {
     subRef.current?.remove();
     usingHCRef.current = false;
 
+    // If both todaySteps and lastAccumulated are 0, we have no valid baseline yet.
+    // The first sensor callback will give us the cumulative steps since device boot,
+    // which may include steps from previous days — we must use it as a base, not count them.
+    const needsBaseInit =
+      dataRef.current.todaySteps === 0 && dataRef.current.lastAccumulated === 0;
+    let baseInitialized = !needsBaseInit;
+
     subRef.current = watchStepCount(({ steps: accumulated }) => {
       if (!mountedRef.current) return;
       const { date: lastDate, todaySteps: prevToday, lastAccumulated: prevAcc } = dataRef.current;
       const currentDate = todayDateString();
 
+      // Midnight rolled over — reset to 0 and use this reading as the new base
       if (currentDate !== lastDate) {
         setAndPersist(0, accumulated);
-      } else if (accumulated < prevAcc) {
-        setAndPersist(prevToday + accumulated, accumulated);
-      } else {
-        setAndPersist(prevToday + (accumulated - prevAcc), accumulated);
+        baseInitialized = true;
+        return;
       }
+
+      // Phone rebooted: sensor counter reset below our saved baseline
+      if (accumulated < prevAcc) {
+        setAndPersist(prevToday + accumulated, accumulated);
+        return;
+      }
+
+      // First reading of a fresh session with no prior data for today.
+      // Use this reading as our baseline — don't add these steps as "today's".
+      if (!baseInitialized) {
+        baseInitialized = true;
+        setAndPersist(0, accumulated);
+        return;
+      }
+
+      // Normal: add delta since last reading
+      setAndPersist(prevToday + (accumulated - prevAcc), accumulated);
     });
   }, [setAndPersist]);
 

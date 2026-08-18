@@ -27,10 +27,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
 import ProgressRing from '../components/ui/ProgressRing';
-import { weeklyStats, weightHistory } from '../constants/mockData';
+import { weeklyStats } from '../constants/mockData';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
-import { updateUserProfile } from '../services/userService';
+import { updateUserProfile, fetchWeightHistory, addWeightEntry } from '../services/userService';
 import { getSocioByDni } from '../services/gymService';
 
 const { width } = Dimensions.get('window');
@@ -74,6 +74,8 @@ export default function PerfilScreen({ navigation }) {
   const [activeTab, setActiveTab]     = useState('stats');
   const [drawerOpen, setDrawerOpen]   = useState(false);
   const [editVisible, setEditVisible] = useState(false);
+  const scrollRef       = React.useRef(null);
+  const scrollOffsetRef = React.useRef(0);
   const slideAnim    = useSharedValue(DRAWER_WIDTH);
   const fadeAnim     = useSharedValue(0);
   const screenOpacity = useSharedValue(0);
@@ -185,8 +187,11 @@ export default function PerfilScreen({ navigation }) {
       />
 
       <ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
+        onScroll={(e) => { scrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
+        scrollEventThrottle={100}
       >
         {/* ── Header ── */}
         <View style={styles.header}>
@@ -284,7 +289,13 @@ export default function PerfilScreen({ navigation }) {
             <TouchableOpacity
               key={key}
               style={[styles.tab, activeTab === key && styles.tabActive]}
-              onPress={() => setActiveTab(key)}
+              onPress={() => {
+                const savedY = scrollOffsetRef.current;
+                setActiveTab(key);
+                setTimeout(() => {
+                  scrollRef.current?.scrollTo({ y: savedY, animated: false });
+                }, 50);
+              }}
             >
               <Text style={[styles.tabText, activeTab === key && styles.tabTextActive]}>
                 {label}
@@ -294,18 +305,20 @@ export default function PerfilScreen({ navigation }) {
         </View>
 
         {/* ── Contenido del tab ── */}
-        {activeTab === 'stats' && <StatsTab />}
-        {activeTab === 'peso' && <PesoTab />}
-        {activeTab === 'medidas' && (
-          <MedidasTab
-            profile={profile}
-            edad={edad}
-            onEdit={() => setEditVisible(true)}
-          />
-        )}
-        {activeTab === 'gym' && (
-          <GymTab uid={authUser?.uid} profile={profile} />
-        )}
+        <View style={{ minHeight: 520 }}>
+          {activeTab === 'stats' && <StatsTab />}
+          {activeTab === 'peso' && <PesoTab uid={authUser?.uid} currentPeso={profile?.peso} />}
+          {activeTab === 'medidas' && (
+            <MedidasTab
+              profile={profile}
+              edad={edad}
+              onEdit={() => setEditVisible(true)}
+            />
+          )}
+          {activeTab === 'gym' && (
+            <GymTab uid={authUser?.uid} profile={profile} />
+          )}
+        </View>
 
         <View style={{ height: spacing.xl }} />
       </ScrollView>
@@ -561,52 +574,137 @@ function StatsTab() {
   );
 }
 
-function PesoTab() {
+const MONTH_SHORT = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+function weightDateLabel(dateStr) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const today = new Date();
+  if (today.getFullYear() === y && today.getMonth()+1 === m && today.getDate() === d) return 'Hoy';
+  return `${d} ${MONTH_SHORT[m-1]}`;
+}
+
+function PesoTab({ uid, currentPeso }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const maxW = Math.max(...weightHistory.map((w) => w.weight));
-  const minW = Math.min(...weightHistory.map((w) => w.weight));
+  const [history, setHistory]     = useState([]);
+  const [loadingH, setLoadingH]   = useState(true);
+  const [addVisible, setAddVisible] = useState(false);
+  const [newPeso, setNewPeso]     = useState('');
+  const [saving, setSaving]       = useState(false);
+
+  const load = useCallback(async () => {
+    if (!uid) return;
+    setLoadingH(true);
+    try { setHistory(await fetchWeightHistory(uid)); } catch {}
+    setLoadingH(false);
+  }, [uid]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAdd = useCallback(async () => {
+    const n = parseFloat(newPeso.replace(',', '.'));
+    if (!n || n < 20 || n > 300) return;
+    setSaving(true);
+    try {
+      await addWeightEntry(uid, n);
+      setNewPeso('');
+      setAddVisible(false);
+      await load();
+    } catch {}
+    setSaving(false);
+  }, [uid, newPeso, load]);
+
+  const visible = history.slice(-6);
+  const maxW = visible.length ? Math.max(...visible.map(e => e.weight)) : 0;
+  const minW = visible.length ? Math.min(...visible.map(e => e.weight)) : 0;
   const range = maxW - minW || 1;
+  const first = visible[0];
+  const last  = visible[visible.length - 1];
+  const change = first && last ? (last.weight - first.weight) : 0;
 
   return (
     <View>
-      <Text style={styles.tabSectionTitle}>Historial de peso</Text>
-      <View style={styles.weightChart}>
-        {weightHistory.map((entry, idx) => {
-          const yPercent = 1 - (entry.weight - minW) / range;
-          return (
-            <View key={idx} style={styles.weightCol}>
-              <View
-                style={[
-                  styles.weightDot,
-                  idx === weightHistory.length - 1 && styles.weightDotActive,
-                  { marginTop: yPercent * 60 },
-                ]}
-              />
-              <Text style={styles.weightValue}>{entry.weight}</Text>
-              <Text style={styles.weightDate}>{entry.date}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
+        <Text style={[styles.tabSectionTitle, { flex: 1, marginBottom: 0 }]}>Historial de peso</Text>
+        <TouchableOpacity
+          onPress={() => { setNewPeso(currentPeso ? String(currentPeso) : ''); setAddVisible(true); }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.primaryDim12, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.full }}
+          activeOpacity={0.75}
+        >
+          <Ionicons name="add" size={15} color={colors.primary} />
+          <Text style={{ color: colors.primary, fontSize: typography.sizes.sm, fontWeight: '600' }}>Registrar</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loadingH ? (
+        <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
+      ) : visible.length === 0 ? (
+        <View style={{ alignItems: 'center', paddingVertical: spacing['3xl'] }}>
+          <Ionicons name="scale-outline" size={40} color={colors.textTertiary} />
+          <Text style={{ color: colors.textSecondary, marginTop: spacing.md, fontSize: typography.sizes.sm }}>
+            Todavía no registraste ningún peso.
+          </Text>
+          <Text style={{ color: colors.textTertiary, fontSize: typography.sizes.xs, marginTop: 4 }}>
+            Tocá "Registrar" para empezar tu historial.
+          </Text>
+        </View>
+      ) : (
+        <>
+          <View style={styles.weightChart}>
+            {visible.map((entry, idx) => {
+              const yPercent = 1 - (entry.weight - minW) / range;
+              return (
+                <View key={entry.id ?? idx} style={styles.weightCol}>
+                  <View style={[styles.weightDot, idx === visible.length - 1 && styles.weightDotActive, { marginTop: yPercent * 60 }]} />
+                  <Text style={styles.weightValue}>{entry.weight}</Text>
+                  <Text style={styles.weightDate}>{weightDateLabel(entry.date)}</Text>
+                </View>
+              );
+            })}
+          </View>
+          <View style={styles.weightSummary}>
+            <View style={styles.weightSummaryItem}>
+              <Text style={styles.weightSummaryLabel}>Inicial</Text>
+              <Text style={styles.weightSummaryValue}>{first.weight}kg</Text>
             </View>
-          );
-        })}
-      </View>
-      <View style={styles.weightSummary}>
-        <View style={styles.weightSummaryItem}>
-          <Text style={styles.weightSummaryLabel}>Inicial</Text>
-          <Text style={styles.weightSummaryValue}>{weightHistory[0].weight}kg</Text>
-        </View>
-        <View style={styles.weightSummaryItem}>
-          <Text style={styles.weightSummaryLabel}>Actual</Text>
-          <Text style={[styles.weightSummaryValue, { color: colors.primary }]}>
-            {weightHistory[weightHistory.length - 1].weight}kg
-          </Text>
-        </View>
-        <View style={styles.weightSummaryItem}>
-          <Text style={styles.weightSummaryLabel}>Cambio</Text>
-          <Text style={[styles.weightSummaryValue, { color: colors.success }]}>
-            -{(weightHistory[0].weight - weightHistory[weightHistory.length - 1].weight).toFixed(1)}kg
-          </Text>
-        </View>
-      </View>
+            <View style={styles.weightSummaryItem}>
+              <Text style={styles.weightSummaryLabel}>Actual</Text>
+              <Text style={[styles.weightSummaryValue, { color: colors.primary }]}>{last.weight}kg</Text>
+            </View>
+            <View style={styles.weightSummaryItem}>
+              <Text style={styles.weightSummaryLabel}>Cambio</Text>
+              <Text style={[styles.weightSummaryValue, { color: change <= 0 ? colors.success : '#EF4444' }]}>
+                {change > 0 ? '+' : ''}{change.toFixed(1)}kg
+              </Text>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Modal registrar peso */}
+      <Modal visible={addVisible} transparent animationType="fade" onRequestClose={() => setAddVisible(false)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setAddVisible(false)}>
+          <TouchableOpacity activeOpacity={1} style={{ width: '80%', backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.xl, borderWidth: 1, borderColor: colors.border }}>
+            <Text style={{ color: colors.text, fontSize: typography.sizes.md, fontWeight: '700', marginBottom: spacing.lg }}>Registrar peso</Text>
+            <TextInput
+              value={newPeso}
+              onChangeText={setNewPeso}
+              keyboardType="decimal-pad"
+              placeholder="Ej: 85.5"
+              placeholderTextColor={colors.textTertiary}
+              style={{ backgroundColor: colors.surfaceElevated, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, color: colors.text, fontSize: typography.sizes.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg }}
+              autoFocus
+            />
+            <TouchableOpacity
+              onPress={handleAdd}
+              disabled={saving}
+              style={{ backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: spacing.md, alignItems: 'center', opacity: saving ? 0.6 : 1 }}
+            >
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: typography.sizes.base }}>Guardar</Text>}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
