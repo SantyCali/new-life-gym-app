@@ -36,7 +36,6 @@ export default function MisionesScreen({ navigation }) {
   const [modalVisible, setModalVisible] = useState(false);
   const [title, setTitle]   = useState('');
   const [xp, setXp]         = useState('');
-  const [coins, setCoins]   = useState('');
   const [icon, setIcon]     = useState('barbell-outline');
   const [saving, setSaving] = useState(false);
 
@@ -47,7 +46,6 @@ export default function MisionesScreen({ navigation }) {
   const openModal = useCallback(() => {
     setTitle('');
     setXp('');
-    setCoins('');
     setIcon('barbell-outline');
     setModalVisible(true);
   }, []);
@@ -55,20 +53,18 @@ export default function MisionesScreen({ navigation }) {
   const handleAdd = useCallback(async () => {
     const t = title.trim();
     if (!t) { Alert.alert('Falta el nombre', 'Escribí una descripción para la misión.'); return; }
-    const xpNum    = parseInt(xp, 10);
-    const coinsNum = parseInt(coins, 10);
-    if (!xpNum || xpNum < 1)       { Alert.alert('XP inválido', 'Ingresá un número mayor a 0.'); return; }
-    if (!coinsNum || coinsNum < 1) { Alert.alert('Monedas inválidas', 'Ingresá un número mayor a 0.'); return; }
+    const xpNum = parseInt(xp, 10);
+    if (!xpNum || xpNum < 1) { Alert.alert('XP inválido', 'Ingresá un número mayor a 0.'); return; }
     setSaving(true);
     try {
-      await addMission({ title: t, xp: xpNum, coins: coinsNum, icon });
+      await addMission({ title: t, xp: xpNum, icon });
       setModalVisible(false);
     } catch {
       Alert.alert('Error', 'No se pudo guardar la misión. Intentá de nuevo.');
     } finally {
       setSaving(false);
     }
-  }, [title, xp, coins, icon]);
+  }, [title, xp, icon]);
 
   const handleDelete = useCallback((mission) => {
     Alert.alert(
@@ -88,7 +84,7 @@ export default function MisionesScreen({ navigation }) {
     );
   }, []);
 
-  const canSave = title.trim().length > 0 && parseInt(xp, 10) > 0 && parseInt(coins, 10) > 0;
+  const canSave = title.trim().length > 0 && parseInt(xp, 10) > 0;
 
   return (
     <Animated.View style={screenStyle}>
@@ -191,18 +187,6 @@ export default function MisionesScreen({ navigation }) {
                   maxLength={4}
                 />
               </View>
-              <View style={styles.halfField}>
-                <Text style={[styles.label, { color: colors.textSecondary }]}>Monedas 🪙</Text>
-                <TextInput
-                  style={[styles.input, { color: colors.text, backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
-                  value={coins}
-                  onChangeText={setCoins}
-                  placeholder="5"
-                  placeholderTextColor={colors.textTertiary}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                />
-              </View>
             </View>
 
             {/* Icon picker */}
@@ -269,9 +253,6 @@ function MisionRow({ mission, colors, styles, onDelete }) {
         <View style={styles.badges}>
           <View style={[styles.badge, { backgroundColor: colors.primaryDim12 }]}>
             <Text style={[styles.badgeText, { color: colors.primary }]}>+{mission.xp} XP</Text>
-          </View>
-          <View style={[styles.badge, { backgroundColor: colors.coinDim }]}>
-            <Text style={[styles.badgeText, { color: colors.coin }]}>★ {mission.coins}</Text>
           </View>
         </View>
       </View>

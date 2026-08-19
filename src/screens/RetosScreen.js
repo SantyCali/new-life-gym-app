@@ -16,8 +16,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
-import { todayStats, stepMilestones, logros } from '../constants/mockData';
-import useDailyMissions from '../hooks/useDailyMissions';
+import { stepMilestones, logros } from '../constants/mockData';
+import { useStepContext } from '../context/StepContext';
 
 const { width } = Dimensions.get('window');
 
@@ -27,8 +27,7 @@ const INSPIRATION_IMG =
 export default function RetosScreen({ navigation }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { missions } = useDailyMissions();
-  const currentSteps = todayStats.steps;
+  const { steps: currentSteps } = useStepContext();
   const maxSteps = stepMilestones[stepMilestones.length - 1].steps;
   const progressPercent = Math.min((currentSteps / maxSteps) * 100, 100);
   const nextMilestone = stepMilestones.find((m) => m.steps > currentSteps);
@@ -57,6 +56,22 @@ export default function RetosScreen({ navigation }) {
             <Text style={styles.rachaBtnText}>Ir a Racha</Text>
           </TouchableOpacity>
         </View>
+
+        {/* ── Torneos ── */}
+        <TouchableOpacity
+          style={[styles.torneosCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+          onPress={() => navigation.navigate('Torneos')}
+          activeOpacity={0.82}
+        >
+          <View style={[styles.torneosIconWrap, { backgroundColor: '#FBBF2415', borderColor: '#FBBF2440' }]}>
+            <Ionicons name="trophy" size={22} color="#FBBF24" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.torneosTitle, { color: colors.text }]}>Torneos entre amigos</Text>
+            <Text style={[styles.torneosSub, { color: colors.textSecondary }]}>Competí por XP, nivel y visitas al gym</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
 
         {/* ── Progreso Diario: Hitos de Pasos ── */}
         <View style={styles.section}>
@@ -129,16 +144,6 @@ export default function RetosScreen({ navigation }) {
           )}
         </View>
 
-        {/* ── Misiones Diarias ── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Misiones Diarias</Text>
-          <View style={styles.missionList}>
-            {missions.map((m) => (
-              <MissionItem key={m.id} mission={m} />
-            ))}
-          </View>
-        </View>
-
         {/* ── Logros Premium ── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Logros Premium</Text>
@@ -176,60 +181,6 @@ export default function RetosScreen({ navigation }) {
       </ScrollView>
     </SafeAreaView>
     </Animated.View>
-  );
-}
-
-function MissionItem({ mission }) {
-  const { theme: { colors } } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
-  const done = mission.status === 'completed';
-  const locked = mission.status === 'locked';
-
-  return (
-    <View
-      style={[
-        styles.missionItem,
-        done && styles.missionItemDone,
-        locked && styles.missionItemLocked,
-      ]}
-    >
-      <View
-        style={[
-          styles.missionIcon,
-          done && styles.missionIconDone,
-          locked && styles.missionIconLocked,
-        ]}
-      >
-        {done ? (
-          <Ionicons name="checkmark" size={16} color={colors.textInverse} />
-        ) : locked ? (
-          <Ionicons name="lock-closed" size={14} color={colors.textTertiary} />
-        ) : (
-          <Ionicons name={mission.icon} size={16} color={colors.primary} />
-        )}
-      </View>
-
-      <View style={styles.missionContent}>
-        <Text
-          style={[
-            styles.missionTitle,
-            locked && styles.missionTitleLocked,
-          ]}
-        >
-          {mission.title}
-        </Text>
-        <View style={styles.missionRewards}>
-          <Text style={styles.missionXP}>+{mission.xp} XP</Text>
-          <Text style={styles.missionCoins}>🪙 {mission.coins}</Text>
-        </View>
-      </View>
-
-      {done && (
-        <View style={styles.missionDoneChip}>
-          <Text style={styles.missionDoneText}>✓</Text>
-        </View>
-      )}
-    </View>
   );
 }
 
@@ -301,6 +252,34 @@ function makeStyles(colors) { return StyleSheet.create({
     fontSize: typography.sizes.sm,
     color: colors.streak,
     fontWeight: typography.weights.semibold,
+  },
+
+  // Torneos card
+  torneosCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 0.5,
+    padding: spacing.md,
+    gap: spacing.md,
+    marginBottom: spacing.xl,
+  },
+  torneosIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  torneosTitle: {
+    fontSize: typography.sizes.base,
+    fontWeight: typography.weights.bold,
+    marginBottom: 2,
+  },
+  torneosSub: {
+    fontSize: typography.sizes.sm,
   },
 
   // Section
@@ -402,66 +381,6 @@ function makeStyles(colors) { return StyleSheet.create({
     fontSize: typography.sizes.sm,
     color: colors.textSecondary,
     lineHeight: typography.sizes.sm * 1.6,
-  },
-
-  // Mission list
-  missionList: { gap: spacing.sm },
-  missionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: radius.lg,
-    borderWidth: 0.5,
-    borderColor: colors.border,
-    padding: spacing.md,
-    gap: spacing.md,
-  },
-  missionItemDone: {
-    borderColor: colors.primaryBorder,
-    backgroundColor: colors.primaryDim12,
-  },
-  missionItemLocked: { opacity: 0.5 },
-  missionIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.primaryDim12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  missionIconDone: { backgroundColor: colors.primary },
-  missionIconLocked: { backgroundColor: colors.surfaceActive },
-  missionContent: { flex: 1 },
-  missionTitle: {
-    fontSize: typography.sizes.base,
-    fontWeight: typography.weights.semibold,
-    color: colors.text,
-    marginBottom: 3,
-  },
-  missionTitleLocked: { color: colors.textSecondary },
-  missionRewards: { flexDirection: 'row', gap: spacing.md },
-  missionXP: {
-    fontSize: typography.sizes.sm,
-    color: colors.primary,
-    fontWeight: typography.weights.bold,
-  },
-  missionCoins: {
-    fontSize: typography.sizes.sm,
-    color: colors.coin,
-    fontWeight: typography.weights.medium,
-  },
-  missionDoneChip: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  missionDoneText: {
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.black,
-    color: colors.textInverse,
   },
 
   // Logros

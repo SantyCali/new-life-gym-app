@@ -13,6 +13,7 @@ export const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser]           = useState(null);
   const [isTrainer, setIsTrainer] = useState(false);
+  const [isTester,  setIsTester]  = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [authLoading, setAuthLoading]   = useState(false);
   const [authError, setAuthError]       = useState(null);
@@ -22,13 +23,20 @@ export function AuthProvider({ children }) {
       if (firebaseUser) {
         try {
           const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
-          const rol  = snap.exists() ? (snap.data().rol ?? 'usuario') : 'usuario';
-          setIsTrainer(rol === 'entrenador');
+          const data  = snap.exists() ? snap.data() : {};
+          const rawRol = data.rol ?? 'usuario';
+          const roles  = Array.isArray(rawRol)
+            ? rawRol
+            : rawRol.split(',').map(r => r.trim());
+          setIsTrainer(roles.includes('entrenador'));
+          setIsTester(roles.includes('tester'));
         } catch {
           setIsTrainer(false);
+          setIsTester(false);
         }
       } else {
         setIsTrainer(false);
+        setIsTester(false);
       }
       setUser(firebaseUser);
       setInitializing(false);
@@ -81,6 +89,7 @@ export function AuthProvider({ children }) {
     user,
     isAuthenticated: !!user,
     isTrainer,
+    isTester,
     initializing,
     authLoading,
     authError,

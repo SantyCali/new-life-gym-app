@@ -11,10 +11,11 @@ import {
 } from '../services/stepService';
 import {
   awardXPAndCoins, checkAndAwardGymReward, updateStreak,
-  XP_PER_1K_STEPS, COINS_PER_1K_STEPS, XP_GOAL_BONUS, COINS_GOAL_BONUS,
+  XP_PER_1K_STEPS, XP_GOAL_BONUS,
   STEPS_FOR_STREAK,
 } from '../services/gamificationService';
 import { subscribeToUserPresence } from '../services/gymService';
+import { stepMilestones } from '../constants/mockData';
 
 const DEFAULT_GOAL = 10000;
 const StepContext  = createContext(null);
@@ -125,6 +126,51 @@ export function StepProvider({ children }) {
     return () => sub.remove();
   }, [steps, syncFirestore]);
 
+  // ── Gamification: milestone bonuses (one-time per milestone per day) ──────────
+  // milestoneBaseRef: steps on first mount reading — milestones already passed at
+  // startup are marked as reached without awarding (same pattern as per-1K below).
+  const milestoneBaseRef    = useRef(-1);
+  const milestoneReachedRef = useRef(new Set());
+
+  useEffect(() => {
+    AsyncStorage.getItem(`milestones_${todayDateString()}`)
+      .then(v => { if (v) milestoneReachedRef.current = new Set(JSON.parse(v)); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!user?.uid || loading || steps === 0) return;
+
+    // First reading: mark already-passed milestones without awarding
+    if (milestoneBaseRef.current < 0) {
+      milestoneBaseRef.current = steps;
+      stepMilestones.forEach(m => {
+        if (steps >= m.steps) milestoneReachedRef.current.add(m.steps);
+      });
+      return;
+    }
+
+    const prev = milestoneBaseRef.current;
+    milestoneBaseRef.current = steps;
+    let updated = false;
+
+    stepMilestones.forEach(m => {
+      if (steps >= m.steps && prev < m.steps && !milestoneReachedRef.current.has(m.steps)) {
+        milestoneReachedRef.current.add(m.steps);
+        updated = true;
+        awardXPAndCoins(user.uid, m.xp);
+      }
+    });
+
+    if (updated) {
+      AsyncStorage.setItem(
+        `milestones_${todayDateString()}`,
+        JSON.stringify([...milestoneReachedRef.current])
+      ).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steps, user?.uid, loading]);
+
   // ── Gamification: XP/coins from step milestones ───────────────────────────────
   const rewardedKRef = useRef(0);
   const prevStepsRef = useRef(-1);
@@ -156,19 +202,17 @@ export function StepProvider({ children }) {
     const oldK = rewardedKRef.current;
     if (newK <= oldK) return;
 
-    const diff     = newK - oldK;
-    let xpGain     = diff * XP_PER_1K_STEPS;
-    let coinGain   = diff * COINS_PER_1K_STEPS;
+    const diff  = newK - oldK;
+    let xpGain  = diff * XP_PER_1K_STEPS;
 
     // Daily goal bonus (only once, when crossing the threshold)
     if (steps >= DEFAULT_GOAL && oldK * 1000 < DEFAULT_GOAL) {
-      xpGain   += XP_GOAL_BONUS;
-      coinGain += COINS_GOAL_BONUS;
+      xpGain += XP_GOAL_BONUS;
     }
 
     rewardedKRef.current = newK;
     AsyncStorage.setItem(`rewarded_k_${todayDateString()}`, String(newK)).catch(() => {});
-    awardXPAndCoins(user.uid, xpGain, coinGain);
+    awardXPAndCoins(user.uid, xpGain);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [steps, user?.uid, loading]);
 

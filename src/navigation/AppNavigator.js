@@ -13,9 +13,12 @@ import ClientProgressScreen from '../screens/trainer/ClientProgressScreen';
 import MisionesScreen from '../screens/trainer/MisionesScreen';
 import GymScreen from '../screens/GymScreen';
 import RachaScreen from '../screens/RachaScreen';
+import TorneosScreen from '../screens/TorneosScreen';
+import TorneoDetailScreen from '../screens/TorneoDetailScreen';
 import useAuth from '../hooks/useAuth';
 import { useTheme } from '../context/ThemeContext';
 import usePushNotifications from '../hooks/usePushNotifications';
+import { GymEventsProvider } from '../context/GymEventsContext';
 
 const Stack = createNativeStackNavigator();
 
@@ -47,7 +50,8 @@ export default function AppNavigator() {
 
   return (
     <NavigationContainer theme={navTheme}>
-      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
+    <GymEventsProvider>
+      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: colors.background } }}>
         {isAuthenticated ? (
           <>
             <Stack.Screen name="Main" component={TabNavigator} />
@@ -96,6 +100,8 @@ export default function AppNavigator() {
               component={RachaScreen}
               options={{ presentation: 'transparentModal', animation: 'none' }}
             />
+            <Stack.Screen name="Torneos" component={TorneosScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background } }} />
+            <Stack.Screen name="TorneoDetail" component={TorneoDetailScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background } }} />
           </>
         ) : (
           <>
@@ -108,6 +114,7 @@ export default function AppNavigator() {
           </>
         )}
       </Stack.Navigator>
+    </GymEventsProvider>
     </NavigationContainer>
   );
 }

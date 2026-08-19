@@ -9,14 +9,13 @@ export function subscribeToDailyMissions(callback) {
   );
 }
 
-export async function addMission({ title, xp, coins, icon }) {
+export async function addMission({ title, xp, icon }) {
   const snap = await getDoc(REF);
   const existing = snap.exists() ? (snap.data().missions ?? []) : [];
   const mission = {
     id: Date.now().toString(),
     title: title.trim(),
     xp: Number(xp),
-    coins: Number(coins),
     icon,
   };
   await setDoc(REF, { missions: [...existing, mission], updatedAt: serverTimestamp() });

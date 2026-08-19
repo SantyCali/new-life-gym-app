@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useEffect } from 'react';
+import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import GoalModal from '../components/ui/GoalModal';
 import AnnouncementCard from '../components/ui/AnnouncementCard';
+import AnnouncementEditSheet from '../components/ui/AnnouncementEditSheet';
 import { subscribeToClientRoutine } from '../services/routineService';
 import { subscribeToAnnouncement } from '../services/announcementService';
 import { MUSCLE_GROUPS } from '../constants/exercises';
@@ -33,6 +34,8 @@ import { useStepContext } from '../context/StepContext';
 import HealthConnectBanner from '../components/ui/HealthConnectBanner';
 import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
+import { XP_GYM_VISIT } from '../services/gamificationService';
+import { useGymEvents } from '../context/GymEventsContext';
 
 const DAY_ABBR = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
 
@@ -46,7 +49,7 @@ export default function HomeScreen({ navigation }) {
   const { profile } = useUserProfile();
   const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect } = useStepContext();
   const { activeCount: gymCount } = useGymCheckins();
-  const totalMonedas = profile?.monedas ?? 0;
+
   const weightKgHome = profile?.peso ? Number(profile.peso) : 70;
 
   const [goal, setGoal]                     = useState(todayStats.stepsGoal);
@@ -164,7 +167,7 @@ export default function HomeScreen({ navigation }) {
     return subscribeToClientRoutine(user.uid, setRoutine);
   }, [user?.uid]);
 
-  const todayDay = routine?.dias?.[0];
+  const todayDay = routine?.dias?.[gymDayIndex ?? 0];
   const todayMuscleGroups = useMemo(() => {
     const exs = todayDay?.ejercicios ?? [];
     return [...new Set(exs.map(e => {
@@ -176,8 +179,11 @@ export default function HomeScreen({ navigation }) {
     ? todayDay.nombre
     : todayMuscleGroups.slice(0, 2).join(' + ');
 
-  const [announcement, setAnnouncement] = useState(null);
+  const [announcement, setAnnouncement]   = useState(null);
+  const [annEditOpen,  setAnnEditOpen]    = useState(false);
   useEffect(() => subscribeToAnnouncement(setAnnouncement), []);
+
+  const { isAtGym, gymDayIndex, showGymCelebration } = useGymEvents();
 
   // Load goal from storage on focus (but don't restart ring animation needlessly)
   useFocusEffect(
@@ -240,6 +246,19 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* ── Barra "En el gym" ── */}
+        {isAtGym && (
+          <TouchableOpacity
+            style={styles.gymBar}
+            onPress={showGymCelebration}
+            activeOpacity={0.85}
+          >
+            <View style={styles.gymDot} />
+            <Text style={styles.gymBarText}>En el gym</Text>
+            <Text style={styles.gymBarXP}>+{XP_GYM_VISIT} XP</Text>
+          </TouchableOpacity>
+        )}
+
         {/* ── Saludo ── */}
         <View style={styles.greeting}>
           <Text style={styles.greetingTitle}>¡Hola, {firstName}! 👋</Text>
@@ -253,7 +272,7 @@ export default function HomeScreen({ navigation }) {
           <AnnouncementCard
             announcement={announcement}
             colors={colors}
-            isDark={isDark}
+            onPress={isTrainer ? () => setAnnEditOpen(true) : undefined}
           />
         )}
 
@@ -402,15 +421,6 @@ export default function HomeScreen({ navigation }) {
             highlighted={isHistoryMode}
             highlightColor={colors.primary}
           />
-          <StatCard
-            icon="logo-bitcoin"
-            value={`${totalMonedas}`}
-            unit="monedas"
-            label="Total"
-            iconColor={colors.coin}
-            highlighted={isHistoryMode}
-            highlightColor={colors.primary}
-          />
         </View>
 
         {/* ── Gym en vivo ── */}
@@ -491,7 +501,14 @@ export default function HomeScreen({ navigation }) {
           colors={colors}
         />
       )}
+
+      <AnnouncementEditSheet
+        visible={annEditOpen}
+        announcement={announcement}
+        onClose={() => setAnnEditOpen(false)}
+      />
     </SafeAreaView>
+
     </Animated.View>
   );
 }
@@ -608,6 +625,37 @@ function makeStyles(colors) { return StyleSheet.create({
     fontWeight: typography.weights.black,
     color: '#fff',
     letterSpacing: 1,
+  },
+  gymBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16A34A28',
+    borderWidth: 1,
+    borderColor: '#22C55E55',
+    borderRadius: radius.lg,
+    paddingVertical: 12,
+    gap: 8,
+    marginBottom: spacing.lg,
+  },
+  gymDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#22C55E',
+  },
+  gymBarText: {
+    fontSize: typography.sizes.base,
+    fontWeight: typography.weights.bold,
+    color: '#22C55E',
+    letterSpacing: 0.3,
+  },
+  gymBarXP: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: '#22C55E',
+    opacity: 0.7,
+    marginLeft: 4,
   },
   streakPill: {
     flexDirection: 'row',

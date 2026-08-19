@@ -28,7 +28,6 @@ export async function createUserDocument(uid, profile) {
     // Gamificación
     nivelJuego: 1,
     xp:         0,
-    monedas:    0,
     racha:      0,
     fechaRegistro: serverTimestamp(),
     rol:       'usuario',

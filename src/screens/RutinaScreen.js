@@ -40,12 +40,17 @@ export default function RutinaScreen() {
 
   useEffect(() => {
     if (!user?.uid) return;
-    const unsub = subscribeToClientRoutine(user.uid, (r) => {
-      setRoutine(r);
-      if (r?.dias?.length) setDayId(prev => prev ?? r.dias[0]?.id);
-    });
+    const unsub = subscribeToClientRoutine(user.uid, setRoutine);
     return unsub;
   }, [user?.uid]);
+
+  // Set initial day from stored gym visit index
+  useEffect(() => {
+    if (!routine?.dias?.length || activeDayId) return;
+    const storedIdx = profile?.gymRoutineDayIndex ?? 0;
+    const safeIdx   = Math.min(Math.max(0, storedIdx), routine.dias.length - 1);
+    setDayId(routine.dias[safeIdx]?.id ?? null);
+  }, [routine, profile?.gymRoutineDayIndex]);
 
   useEffect(() => {
     screenOpacity.value = withTiming(1, { duration: 280 });

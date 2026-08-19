@@ -22,16 +22,17 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
 import ProgressRing from '../components/ui/ProgressRing';
-import { weeklyStats } from '../constants/mockData';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import { updateUserProfile, fetchWeightHistory, addWeightEntry } from '../services/userService';
 import { getSocioByDni } from '../services/gymService';
+import { awardXPAndCoins } from '../services/gamificationService'; // TEMP TEST
 
 const { width } = Dimensions.get('window');
 const BAR_MAX_HEIGHT = 80;
@@ -69,11 +70,12 @@ function calcEdad(fechaNacimiento) {
 export default function PerfilScreen({ navigation }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { user: authUser } = useAuth();
+  const { user: authUser, isTester } = useAuth();
   const { profile, loading } = useUserProfile();
-  const [activeTab, setActiveTab]     = useState('stats');
+  const [activeTab, setActiveTab]     = useState('peso');
   const [drawerOpen, setDrawerOpen]   = useState(false);
   const [editVisible, setEditVisible] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(false);
   const scrollRef       = React.useRef(null);
   const scrollOffsetRef = React.useRef(0);
   const slideAnim    = useSharedValue(DRAWER_WIDTH);
@@ -97,7 +99,6 @@ export default function PerfilScreen({ navigation }) {
   const xp          = profile?.xp         ?? 0;
   const xpRequired  = nivelJuego * 1000;
   const xpPercent   = xpRequired > 0 ? Math.min(Math.round((xp / xpRequired) * 100), 100) : 0;
-  const monedas     = profile?.monedas    ?? 0;
   const racha       = profile?.racha      ?? 0;
 
   const edad  = calcEdad(profile?.fechaNacimiento);
@@ -175,6 +176,23 @@ export default function PerfilScreen({ navigation }) {
         initials={initials}
       />
 
+      {/* ── Modal foto en grande ── */}
+      <Modal visible={photoPreview} transparent animationType="fade" onRequestClose={() => setPhotoPreview(false)}>
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: '#000000CC', alignItems: 'center', justifyContent: 'center' }}
+          activeOpacity={1}
+          onPress={() => setPhotoPreview(false)}
+        >
+          {photoUri && (
+            <Image
+              source={{ uri: photoUri }}
+              style={{ width: 300, height: 300, borderRadius: 16 }}
+              resizeMode="cover"
+            />
+          )}
+        </TouchableOpacity>
+      </Modal>
+
       {/* ── Modal editar medidas ── */}
       <EditMedidasModal
         visible={editVisible}
@@ -204,7 +222,17 @@ export default function PerfilScreen({ navigation }) {
         {/* ── Avatar + info básica ── */}
         <View style={styles.profileCard}>
           <View style={styles.avatarBox}>
-            <TouchableOpacity style={styles.avatarCircle} onPress={handlePhotoTap} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={styles.avatarCircle}
+              onPress={handlePhotoTap}
+              onLongPress={() => {
+                if (!photoUri) return;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                setPhotoPreview(true);
+              }}
+              delayLongPress={300}
+              activeOpacity={0.8}
+            >
               {photoUri ? (
                 <ProfilePhoto uri={photoUri} />
               ) : (
@@ -238,6 +266,24 @@ export default function PerfilScreen({ navigation }) {
             </View>
           </View>
 
+          {/* ── TEMP TEST — solo cuenta dev ── */}
+          {isTester && (
+            <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'center', marginBottom: 8 }}>
+              <TouchableOpacity
+                onPress={() => authUser?.uid && awardXPAndCoins(authUser.uid, 400)}
+                style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🧪 +400 XP</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => authUser?.uid && updateUserProfile(authUser.uid, { nivelJuego: 1, xp: 0, xpTotal: 0, gymVisitCount: 0 })}
+                style={{ backgroundColor: '#DC2626', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🔄 Reset Nv1</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Stats de usuario */}
           <View style={styles.userStatsRow}>
             <UserStat label="Peso"   value={peso}   />
@@ -250,13 +296,8 @@ export default function PerfilScreen({ navigation }) {
           </View>
         </View>
 
-        {/* ── Monedas y racha ── */}
+        {/* ── Racha y nivel ── */}
         <View style={styles.coinsStreakRow}>
-          <View style={styles.coinsCard}>
-            <Text style={styles.coinsIcon}>🪙</Text>
-            <Text style={styles.coinsValue}>{monedas.toLocaleString('es-AR')}</Text>
-            <Text style={styles.coinsLabel}>Monedas</Text>
-          </View>
           <View style={styles.coinsCard}>
             <Text style={styles.coinsIcon}>🔥</Text>
             <Text style={styles.coinsValue}>{racha}</Text>
@@ -281,7 +322,6 @@ export default function PerfilScreen({ navigation }) {
         {/* ── Tabs ── */}
         <View style={styles.tabs}>
           {[
-            { key: 'stats',   label: 'Stats'    },
             { key: 'peso',    label: 'Peso'     },
             { key: 'medidas', label: 'Medidas'  },
             { key: 'gym',     label: 'Gym'      },
@@ -306,7 +346,6 @@ export default function PerfilScreen({ navigation }) {
 
         {/* ── Contenido del tab ── */}
         <View style={{ minHeight: 520 }}>
-          {activeTab === 'stats' && <StatsTab />}
           {activeTab === 'peso' && <PesoTab uid={authUser?.uid} currentPeso={profile?.peso} />}
           {activeTab === 'medidas' && (
             <MedidasTab
@@ -535,44 +574,6 @@ function GymTab({ uid, profile }) {
   );
 }
 
-function StatsTab() {
-  const { theme: { colors } } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
-  const maxSteps = Math.max(...weeklyStats.map((d) => d.steps));
-
-  return (
-    <View>
-      <Text style={styles.tabSectionTitle}>Pasos esta semana</Text>
-      <View style={styles.barsChart}>
-        {weeklyStats.map((day, idx) => {
-          const barH = Math.round((day.steps / maxSteps) * BAR_MAX_HEIGHT);
-          return (
-            <View key={idx} style={styles.barCol}>
-              <Text style={styles.barValue}>
-                {day.steps >= 1000
-                  ? `${(day.steps / 1000).toFixed(1)}k`
-                  : day.steps}
-              </Text>
-              <View style={styles.barTrack}>
-                <View
-                  style={[
-                    styles.barFill,
-                    { height: barH, backgroundColor: day.trained ? colors.primary : colors.surfaceActive },
-                  ]}
-                />
-              </View>
-              <Text style={styles.barDay}>{day.day}</Text>
-              {day.trained && <View style={styles.trainedDot} />}
-            </View>
-          );
-        })}
-      </View>
-      <Text style={styles.chartLegend}>
-        🟢 Días con entrenamiento registrado
-      </Text>
-    </View>
-  );
-}
 
 const MONTH_SHORT = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 function weightDateLabel(dateStr) {
@@ -731,10 +732,6 @@ function MedidasTab({ profile, edad, onEdit }) {
     <View>
       <View style={styles.medidasHeader}>
         <Text style={styles.tabSectionTitle}>Medidas corporales</Text>
-        <TouchableOpacity style={styles.editMedidaBtn} onPress={onEdit} activeOpacity={0.75}>
-          <Ionicons name="create-outline" size={16} color={colors.primary} />
-          <Text style={styles.editMedidaText}>Editar</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Lista estilo Health app */}

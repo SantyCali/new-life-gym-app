@@ -3,6 +3,7 @@ import {
   serverTimestamp, query, orderBy, where, Timestamp, getDocs, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { todayDateString } from './stepService';
 
 const COL = collection(db, 'ingresosActivos');
 const ACTIVE_MS = 90 * 60 * 1000; // 1 h 30 min
@@ -189,14 +190,62 @@ export async function findUserByDni(dni) {
   };
 }
 
-// Subscribe to whether a specific DNI has an active check-in today
+// Advance the user's routine day index on each new gym visit (once per day).
+// Returns the index to use today.
+export async function advanceRoutineDay(uid, diasCount) {
+  if (!uid || !diasCount) return 0;
+  const today = todayDateString();
+  try {
+    const ref  = doc(db, 'users', uid);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return 0;
+    const { gymRoutineDayIndex, lastGymVisitDate } = snap.data();
+    if (lastGymVisitDate === today) {
+      return gymRoutineDayIndex ?? 0;
+    }
+    const nextIndex = gymRoutineDayIndex == null
+      ? 0
+      : (gymRoutineDayIndex + 1) % diasCount;
+    await updateDoc(ref, { gymRoutineDayIndex: nextIndex, lastGymVisitDate: today });
+    return nextIndex;
+  } catch { return 0; }
+}
+
+// Subscribe to whether a specific DNI has an active check-in within the last ACTIVE_MS.
+// Applies the same 90-min window as the admin panel.
+// Also schedules a local timer to auto-clear presence when the window expires,
+// so the banner disappears even if Firestore doesn't update.
 export function subscribeToUserPresence(gymDni, onPresent) {
-  const midnight = new Date();
-  midnight.setHours(0, 0, 0, 0);
-  const q = query(
-    COL,
-    where('dni', '==', gymDni.trim()),
-    where('fechaHora', '>', Timestamp.fromDate(midnight)),
-  );
-  return onSnapshot(q, snap => onPresent(!snap.empty), () => {});
+  let expiryTimer = null;
+
+  const q = query(COL, where('dni', '==', gymDni.trim()));
+  const unsub = onSnapshot(q, snap => {
+    if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const midnightMs = midnight.getTime();
+    const cutoffMs   = Date.now() - ACTIVE_MS;
+
+    let latestCheckinMs = 0;
+    const present = snap.docs.some(d => {
+      const data = d.data();
+      if (data.activo === false) return false;
+      const ms = data.fechaHora?.toMillis?.() ?? 0;
+      if (ms > latestCheckinMs) latestCheckinMs = ms;
+      return ms > midnightMs && ms > cutoffMs;
+    });
+
+    onPresent(present);
+
+    if (present && latestCheckinMs > 0) {
+      const remaining = ACTIVE_MS - (Date.now() - latestCheckinMs);
+      if (remaining > 0) expiryTimer = setTimeout(() => onPresent(false), remaining);
+    }
+  }, err => {
+    console.error('[GymPresence] Firestore error:', err.code, err.message);
+    onPresent(false);
+  });
+
+  return () => { if (expiryTimer) clearTimeout(expiryTimer); unsub(); };
 }

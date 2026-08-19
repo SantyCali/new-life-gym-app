@@ -26,10 +26,10 @@ export const todayStats = {
 };
 
 export const stepMilestones = [
-  { label: '2K', steps: 2000, xp: 1, coins: 5 },
-  { label: '5K', steps: 5000, xp: 2, coins: 10 },
-  { label: '7.4K', steps: 7420, xp: 3, coins: 15 },
-  { label: '25K', steps: 25505, xp: 5, coins: 30, isPremium: true },
+  { label: '2K',   steps:  2000, xp:  30 },
+  { label: '5K',   steps:  5000, xp:  50 },
+  { label: '7.4K', steps:  7420, xp:  75 },
+  { label: '25K',  steps: 25505, xp: 200, isPremium: true },
 ];
 
 export const todayWorkout = {
