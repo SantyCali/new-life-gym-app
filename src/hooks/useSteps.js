@@ -137,11 +137,11 @@ export default function useSteps() {
 
       const ok = await isPedometerAvailable();
       if (!mountedRef.current) return;
-      setAvailable(ok);
-      if (!ok) { setLoading(false); return; }
 
       // ── iOS ────────────────────────────────────────────────────────────────
       if (Platform.OS === 'ios') {
+        setAvailable(ok);
+        if (!ok) { setLoading(false); return; }
         await refreshIOS();
         if (!mountedRef.current) return;
         setLoading(false);
@@ -153,6 +153,10 @@ export default function useSteps() {
       }
 
       // ── Android ────────────────────────────────────────────────────────────
+      // Even if hardware step counter is missing, Health Connect can still work.
+      // Don't bail out on !ok — always check HC first.
+      setAvailable(ok);
+
       // Show cached data immediately
       const saved = await loadStepData();
       if (saved.date === todayDateString() && mountedRef.current) {
@@ -171,14 +175,15 @@ export default function useSteps() {
         if (!mountedRef.current) return;
         if (alreadyGranted) {
           setHcStatus(HC_STATUS.AVAILABLE);
+          setAvailable(true); // HC is our step source regardless of hardware sensor
           await startHCPath();
         } else {
           setHcStatus(HC_STATUS.NOT_AUTHORIZED);
-          startFallbackPath();
+          if (ok) startFallbackPath(); // sensor fallback only if hardware exists
         }
       } else {
         setHcStatus(status);
-        startFallbackPath();
+        if (ok) startFallbackPath(); // sensor fallback only if hardware exists
       }
 
       // On foreground: re-sync data AND check if HC was just installed/authorized
@@ -199,6 +204,7 @@ export default function useSteps() {
             if (!mountedRef.current) return;
             if (alreadyGranted) {
               setHcStatus(HC_STATUS.AVAILABLE);
+              setAvailable(true);
               await startHCPath();
             } else {
               setHcStatus(HC_STATUS.NOT_AUTHORIZED);
@@ -282,6 +288,7 @@ export default function useSteps() {
     if (!mountedRef.current) return;
     if (granted) {
       setHcStatus(HC_STATUS.AVAILABLE);
+      setAvailable(true);
       await startHCPath();
     }
   }, [startHCPath]);

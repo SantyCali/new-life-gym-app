@@ -1,4 +1,4 @@
-﻿// 1. Genera la interfaz web
+// 1. Genera la interfaz web
 function doGet() {
   return HtmlService.createHtmlOutput(obtenerDisenoHtml())
     .setTitle("Control de Acceso - NLG")
@@ -92,22 +92,22 @@ function procesarDni(dni) {
     if (estadoCuota === "AL DIA") {
       return { 
         estatus: "aldia", 
-        mensaje: "Â¡BIENVENIDO/A, " + nombreCompleto.toUpperCase() + "!", 
-        subtexto: "Acceso Concedido â€¢ Tu cuota vence el: " + textoVencimiento 
+        mensaje: "¡BIENVENIDO/A, " + nombreCompleto.toUpperCase() + "!", 
+        subtexto: "Acceso Concedido • Tu cuota vence el: " + textoVencimiento 
       };
     } else {
       return { 
         estatus: "vencido", 
         mensaje: "CUOTA VENCIDA", 
-        subtexto: nombreCompleto.toUpperCase() + " (VenciÃ³ el " + textoVencimiento + ") â€¢ Pasa por recepciÃ³n" 
+        subtexto: nombreCompleto.toUpperCase() + " (Venció el " + textoVencimiento + ") • Pasa por recepción" 
       };
     }
   } else {
-    return { estatus: "noencontrado", mensaje: "DNI NO ENCONTRADO", subtexto: "Por favor, regÃ­strate en recepciÃ³n." };
+    return { estatus: "noencontrado", mensaje: "DNI NO ENCONTRADO", subtexto: "Por favor, regístrate en recepción." };
   }
 }
 
-// 3. DiseÃ±o HTML con Logo y Fondo desde Google Drive
+// 3. Diseño HTML con Logo y Fondo desde Google Drive
 function obtenerDisenoHtml() {
   // 1. PEGA EL ID DE TU LOGO EN DRIVE:
   var idLogoDrive = "1fCWyoN-vyKlX-zOC4M5Wm7Auz19VRL7G"; 
@@ -301,7 +301,7 @@ function obtenerDisenoHtml() {
         
         <button class="btn btn-borrar-todo" onclick="borrarTodo()">C</button>
         <button class="btn" onclick="presionar('0')">0</button>
-        <button class="btn btn-borrar-uno" onclick="borrarUno()">â†</button>
+        <button class="btn btn-borrar-uno" onclick="borrarUno()">←</button>
         
         <button class="btn btn-enviar" onclick="enviar()">ENTRAR</button>
       </div>
@@ -397,7 +397,7 @@ function obtenerDisenoHtml() {
             oscillator.stop(audioCtx.currentTime + 0.6);
           }
         } catch(e) {
-          console.log("El navegador bloqueÃ³ el sonido temporalmente.");
+          console.log("El navegador bloqueó el sonido temporalmente.");
         }
       }
 
@@ -423,7 +423,7 @@ function obtenerDisenoHtml() {
   </html>`;
 }
 
-// â”€â”€â”€ SINCRONIZACIÃ“N CON FIRESTORE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── SINCRONIZACIÓN CON FIRESTORE ────────────────────────────────────────────
 
 function getFirebaseToken_() {
   var cache = CacheService.getScriptCache();
@@ -500,7 +500,7 @@ function syncIngresoFirestore_(dni, nombre, estado, fechaVencimientoISO) {
   try {
     var token = getFirebaseToken_();
 
-    // Evitar duplicados: si la persona ya tiene ingreso activo en los Ãºltimos 75 min, no registrar
+    // Evitar duplicados: si la persona ya tiene ingreso activo en los últimos 75 min, no registrar
     if (isAlreadyActive_(dni, token)) return;
 
     var base = 'https://firestore.googleapis.com/v1/projects/new-life-app-f951c'
@@ -575,12 +575,12 @@ function debugSync() {
   var code = resp.getResponseCode();
   var body = resp.getContentText();
   if (code !== 200) throw new Error('Firestore HTTP ' + code + ': ' + body);
-  // Si llega acÃ¡: escribiÃ³ correctamente en Firestore
+  // Si llega acá: escribió correctamente en Firestore
 }
 
-// â”€â”€â”€ SINCRONIZACIÃ“N MASIVA: corre una sola vez desde el editor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Lee TODOS los socios del Excel y los sube a Firestore colecciÃ³n "socios".
-// DespuÃ©s de correrlo, la app muestra el estado de cuota de cada uno.
+// ─── SINCRONIZACIÓN MASIVA: corre una sola vez desde el editor ───────────────
+// Lee TODOS los socios del Excel y los sube a Firestore colección "socios".
+// Después de correrlo, la app muestra el estado de cuota de cada uno.
 function syncTodosLosSocios() {
   var ss        = SpreadsheetApp.getActiveSpreadsheet();
   var hoja      = ss.getSheetByName('Socios');
@@ -629,7 +629,7 @@ function syncTodosLosSocios() {
     });
     total++;
 
-    // Firestore acepta mÃ¡ximo 500 operaciones por batch
+    // Firestore acepta máximo 500 operaciones por batch
     if (writes.length === 500) {
       var r = UrlFetchApp.fetch(commitUrl, {
         method: 'POST', contentType: 'application/json',
@@ -655,9 +655,9 @@ function syncTodosLosSocios() {
   throw new Error('OK - ' + total + ' socios sincronizados a Firestore');
 }
 
-// â”€â”€ SYNC MASIVO v2: usa PATCH individual (mÃ¡s confiable que batch) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── SYNC MASIVO v2: usa PATCH individual (más confiable que batch) ────────────
 // Correr UNA VEZ desde el editor para subir todo el Excel a Firestore.
-// Ver â†’ Registros para ver el resultado.
+// Ver → Registros para ver el resultado.
 function syncTodosLosSociosV2() {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
   var hoja  = ss.getSheetByName('Socios');
@@ -721,10 +721,10 @@ function syncTodosLosSociosV2() {
   Logger.log('COMPLETADO: ' + ok + ' sincronizados, ' + err + ' errores');
 }
 
-// â”€â”€ AUTO-SYNC: se dispara solo cuando editÃ¡s la hoja Socios â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AUTO-SYNC: se dispara solo cuando editás la hoja Socios ──────────────────
 // Configurar como trigger:
-//   Triggers (reloj) â†’ + Agregar trigger â†’ FunciÃ³n: onSocioEditado
-//   â†’ Fuente: Desde hoja de cÃ¡lculo â†’ Evento: Al editar â†’ Guardar
+//   Triggers (reloj) → + Agregar trigger → Función: onSocioEditado
+//   → Fuente: Desde hoja de cálculo → Evento: Al editar → Guardar
 function onSocioEditado(e) {
   try {
     if (e.source.getActiveSheet().getName() !== 'Socios') return;
@@ -780,14 +780,14 @@ function onSocioEditado(e) {
   }
 }
 
-// â”€â”€ EDICIÃ“N DESDE LA APP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── EDICIÓN DESDE LA APP ────────────────────────────────────────────────────
 // Recibe POST con { originalDni, nombre, dni, fechaVencimiento } desde la app
 // y actualiza la fila correspondiente en la hoja "Socios".
 //
 // Para activarlo (una sola vez):
-//   Implementar â†’ Nueva implementaciÃ³n â†’ AplicaciÃ³n web
-//   Ejecutar como: Yo  |  Acceso: Cualquier usuario (anÃ³nimo) â†’ Implementar
-//   CopiÃ¡ la URL y pegala en SHEETS_SYNC_URL de src/services/gymService.js
+//   Implementar → Nueva implementación → Aplicación web
+//   Ejecutar como: Yo  |  Acceso: Cualquier usuario (anónimo) → Implementar
+//   Copiá la URL y pegala en SHEETS_SYNC_URL de src/services/gymService.js
 function doPost(e) {
   try {
     var data         = JSON.parse(e.postData.contents);
@@ -798,7 +798,7 @@ function doPost(e) {
       .createTextOutput(JSON.stringify({ ok: false, error: 'Hoja no encontrada' }))
       .setMimeType(ContentService.MimeType.JSON);
 
-    // â”€â”€ AGREGAR nuevo socio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── AGREGAR nuevo socio ────────────────────────────────────────────────────
     if (action === 'add') {
       var addNombre   = String(data.nombre || '').trim();
       var addDni      = String(data.dni    || '').trim();
@@ -816,7 +816,7 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // â”€â”€ ELIMINAR socio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── ELIMINAR socio ─────────────────────────────────────────────────────────
     if (action === 'delete') {
       var delDni  = String(data.dni || '').trim();
       var valores = hoja.getDataRange().getValues();
@@ -835,7 +835,7 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // â”€â”€ ACTUALIZAR socio (comportamiento original) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── ACTUALIZAR socio (comportamiento original) ─────────────────────────────
     var originalDni  = String(data.originalDni || '').trim();
     var nuevoNombre  = String(data.nombre       || '').trim();
     var nuevoDni     = String(data.dni          || '').trim();
@@ -863,7 +863,7 @@ function doPost(e) {
       hoja.getRange(fila, 4).clearContent();
     }
 
-    Logger.log('doPost update: ' + originalDni + ' â†’ ' + nuevoDni + ' / ' + nuevoNombre);
+    Logger.log('doPost update: ' + originalDni + ' → ' + nuevoDni + ' / ' + nuevoNombre);
     return ContentService
       .createTextOutput(JSON.stringify({ ok: true }))
       .setMimeType(ContentService.MimeType.JSON);
