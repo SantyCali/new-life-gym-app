@@ -12,7 +12,14 @@ import {
   Image,
   TextInput,
   Alert,
+  LayoutAnimation,
+  UIManager,
+  Platform,
 } from 'react-native';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -23,6 +30,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
@@ -30,9 +38,12 @@ import { useTheme } from '../context/ThemeContext';
 import ProgressRing from '../components/ui/ProgressRing';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
-import { updateUserProfile, fetchWeightHistory, addWeightEntry } from '../services/userService';
+import { updateUserProfile, addWeightEntry, deleteWeightEntry } from '../services/userService';
+import { subscribeToBodyWeightHistory } from '../services/progressService';
 import { getSocioByDni } from '../services/gymService';
 import { awardXPAndCoins } from '../services/gamificationService'; // TEMP TEST
+import { useStepContext } from '../context/StepContext';
+import { useGymEvents } from '../context/GymEventsContext';
 
 const { width } = Dimensions.get('window');
 const BAR_MAX_HEIGHT = 80;
@@ -55,6 +66,17 @@ const NIVEL_LABEL = {
   avanzado:     'Avanzado',
 };
 
+function calcCalorias(pesoKg, stepsHoy, gymMinutos) {
+  const kg   = pesoKg   > 0 ? pesoKg   : 70;
+  const steps = stepsHoy > 0 ? stepsHoy : 0;
+  const gym  = gymMinutos > 0 ? gymMinutos : 0;
+  // MET 3.5 = caminata cómoda → kcal = MET × kg × horas
+  const calPasos = Math.round(3.5 * kg * steps / 6000);
+  // MET 5.0 = entrenamiento moderado con pesas
+  const calGym   = Math.round(5.0 * kg * gym  / 60);
+  return { calPasos, calGym, total: calPasos + calGym };
+}
+
 function calcEdad(fechaNacimiento) {
   if (!fechaNacimiento) return null;
   const parts = fechaNacimiento.split('/');
@@ -72,6 +94,8 @@ export default function PerfilScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user: authUser, isTester } = useAuth();
   const { profile, loading } = useUserProfile();
+  const { steps: liveSteps } = useStepContext() ?? { steps: 0 };
+  const { isAtGym } = useGymEvents();
   const [activeTab, setActiveTab]     = useState('peso');
   const [drawerOpen, setDrawerOpen]   = useState(false);
   const [editVisible, setEditVisible] = useState(false);
@@ -102,6 +126,19 @@ export default function PerfilScreen({ navigation }) {
   const racha       = profile?.racha      ?? 0;
 
   const edad  = calcEdad(profile?.fechaNacimiento);
+
+  const { caloriasData, gymMinHoy } = useMemo(() => {
+    const d = new Date();
+    const hoy = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    // Gym: solo cuenta si fue hoy y YA salió (gymTodayMinutes registrados)
+    const minHoy = profile?.gymTodayDate === hoy && !isAtGym && (profile?.gymTodayMinutes ?? 0) > 0
+      ? profile.gymTodayMinutes
+      : 0;
+    // Pasos: usa valor en tiempo real del sensor; fallback a Firestore si es mayor
+    const steps = Math.max(liveSteps ?? 0, profile?.stepsToday ?? 0);
+    return { caloriasData: calcCalorias(profile?.peso ?? 70, steps, minHoy), gymMinHoy: minHoy };
+  }, [profile?.peso, profile?.stepsToday, profile?.gymTodayDate, profile?.gymTodayMinutes, isAtGym, liveSteps]);
+
   const sexo  = profile?.sexo
     ? (profile.sexo === 'masculino' ? 'Masc.' : 'Fem.')
     : '--';
@@ -270,16 +307,35 @@ export default function PerfilScreen({ navigation }) {
           {isTester && (
             <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'center', marginBottom: 8 }}>
               <TouchableOpacity
-                onPress={() => authUser?.uid && awardXPAndCoins(authUser.uid, 400)}
+                onPress={async () => {
+                  if (!authUser?.uid || !profile) return;
+                  const existing = await AsyncStorage.getItem('tester_xp_snap');
+                  if (!existing) await AsyncStorage.setItem('tester_xp_snap', JSON.stringify({
+                    xp: profile.xp ?? 0,
+                    xpTotal: profile.xpTotal ?? 0,
+                    nivelJuego: profile.nivelJuego ?? 1,
+                    gymVisitCount: profile.gymVisitCount ?? 0,
+                    logrosCompletados: profile.logrosCompletados ?? [],
+                  }));
+                  await awardXPAndCoins(authUser.uid, 400);
+                }}
                 style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
               >
                 <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🧪 +400 XP</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => authUser?.uid && updateUserProfile(authUser.uid, { nivelJuego: 1, xp: 0, xpTotal: 0, gymVisitCount: 0 })}
+                onPress={async () => {
+                  if (!authUser?.uid) return;
+                  const raw = await AsyncStorage.getItem('tester_xp_snap');
+                  if (raw) {
+                    await updateUserProfile(authUser.uid, JSON.parse(raw));
+                  } else {
+                    await updateUserProfile(authUser.uid, { nivelJuego: 1, xp: 0, xpTotal: 0, gymVisitCount: 0, logrosCompletados: [] });
+                  }
+                }}
                 style={{ backgroundColor: '#DC2626', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🔄 Reset Nv1</Text>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🔄 Restaurar</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -316,6 +372,33 @@ export default function PerfilScreen({ navigation }) {
               </ProgressRing>
             </View>
             <Text style={styles.coinsLabel}>Nivel {nivelJuego}</Text>
+          </View>
+        </View>
+
+        {/* ── Calorías quemadas ── */}
+        <View style={styles.calCard}>
+          <View style={styles.calLeft}>
+            <Text style={styles.calFireIcon}>🔥</Text>
+            <Text style={styles.calTotal}>{caloriasData.total.toLocaleString('es-AR')}</Text>
+            <Text style={styles.calLabel}>kcal hoy</Text>
+          </View>
+          <View style={styles.calDivider} />
+          <View style={styles.calRight}>
+            <View style={styles.calRow}>
+              <Text style={styles.calRowIcon}>🚶</Text>
+              <View>
+                <Text style={styles.calRowValue}>{caloriasData.calPasos} kcal</Text>
+                <Text style={styles.calRowLabel}>{Math.max(liveSteps ?? 0, profile?.stepsToday ?? 0).toLocaleString('es-AR')} pasos</Text>
+              </View>
+            </View>
+            <View style={[styles.calRow, { marginTop: 8 }]}>
+              <Text style={styles.calRowIcon}>💪</Text>
+              <View>
+                <Text style={styles.calRowValue}>{caloriasData.calGym} kcal</Text>
+                <Text style={styles.calRowLabel}>{gymMinHoy > 0 ? `Gym · ${gymMinHoy} min` : 'Sin visita al gym hoy'}</Text>
+              </View>
+            </View>
+
           </View>
         </View>
 
@@ -543,39 +626,29 @@ function GymTab({ uid, profile }) {
         </TouchableOpacity>
       )}
 
-      {/* ── Tiempo de entrenamiento ── */}
-      <Text style={[styles.tabSectionTitle, { marginTop: spacing.xl }]}>Tiempo habitual de entreno</Text>
-      <View style={styles.trainTimeGrid}>
-        {TRAIN_OPTIONS.map(opt => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[
-              styles.trainTimeChip,
-              { borderColor: colors.border, backgroundColor: colors.surfaceElevated },
-              trainMinutes === opt.value && { borderColor: colors.primary, backgroundColor: colors.primaryDim12 },
-            ]}
-            onPress={() => handleTrainTime(opt.value)}
-            activeOpacity={0.75}
-          >
-            <Text style={[
-              styles.trainTimeChipText,
-              { color: colors.textSecondary },
-              trainMinutes === opt.value && { color: colors.primary, fontWeight: '700' },
-            ]}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Text style={styles.medidasNote}>
-        Usamos este dato para mostrarte estadísticas personalizadas de tu actividad en el gym.
-      </Text>
     </View>
   );
 }
 
 
 const MONTH_SHORT = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const MONTH_FULL  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function groupWeightByMonth(sortedDesc) {
+  const groups = [];
+  const map = {};
+  for (const entry of sortedDesc) {
+    if (!entry.date) continue;
+    const [y, m] = entry.date.split('-').map(Number);
+    const key = `${y}-${String(m).padStart(2,'0')}`;
+    if (!map[key]) {
+      map[key] = { label: `${MONTH_FULL[m-1]} ${y}`, entries: [] };
+      groups.push(map[key]);
+    }
+    map[key].entries.push(entry);
+  }
+  return groups;
+}
 function weightDateLabel(dateStr) {
   if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -584,23 +657,94 @@ function weightDateLabel(dateStr) {
   return `${d} ${MONTH_SHORT[m-1]}`;
 }
 
+function CollapsibleMonthGroup({ label, entries, defaultExpanded, onDelete, colors }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const heightRef    = React.useRef(defaultExpanded ? 1000 : 0);
+  const heightAnim   = useSharedValue(defaultExpanded ? 1000 : 0);
+  const opacityAnim  = useSharedValue(defaultExpanded ? 1 : 0);
+  const chevronAnim  = useSharedValue(defaultExpanded ? 1 : 0);
+
+  const onContentLayout = React.useCallback((e) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0) {
+      heightRef.current = h;
+      if (expanded) heightAnim.value = h; // ajusta sin animar al medir por primera vez
+    }
+  }, [expanded]);
+
+  const toggle = React.useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    heightAnim.value  = withTiming(next ? heightRef.current : 0,  { duration: 300, easing: Easing.bezier(0.4, 0, 0.2, 1) });
+    opacityAnim.value = withTiming(next ? 1 : 0, { duration: 240 });
+    chevronAnim.value = withTiming(next ? 1 : 0, { duration: 280, easing: Easing.out(Easing.ease) });
+  }, [expanded]);
+
+  const containerStyle = useAnimatedStyle(() => ({
+    height: heightAnim.value,
+    opacity: opacityAnim.value,
+    overflow: 'hidden',
+  }));
+
+  const chevronStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${chevronAnim.value * 180}deg` }],
+  }));
+
+  return (
+    <View>
+      <TouchableOpacity onPress={toggle} activeOpacity={0.7}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
+      >
+        <Text style={{ flex: 1, color: colors.textTertiary, fontSize: typography.sizes.xs, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' }}>
+          {label}
+        </Text>
+        <Animated.View style={chevronStyle}>
+          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+        </Animated.View>
+      </TouchableOpacity>
+
+      <Animated.View style={containerStyle}>
+        <View onLayout={onContentLayout}>
+          {entries.map((entry) => (
+            <View key={entry.id ?? entry.date}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.borderLight }}
+            >
+              <Text style={{ flex: 1, color: colors.text, fontSize: typography.sizes.base, fontWeight: '600' }}>
+                {entry.weight} kg
+              </Text>
+              <Text style={{ color: colors.textTertiary, fontSize: typography.sizes.sm, marginRight: spacing.md }}>
+                {weightDateLabel(entry.date)}
+              </Text>
+              <TouchableOpacity onPress={() => onDelete(entry)} hitSlop={10} activeOpacity={0.7}>
+                <Ionicons name="trash-outline" size={18} color={colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
 function PesoTab({ uid, currentPeso }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const [history, setHistory]     = useState([]);
-  const [loadingH, setLoadingH]   = useState(true);
+  const [history, setHistory]       = useState([]);
+  const [loadingH, setLoadingH]     = useState(true);
   const [addVisible, setAddVisible] = useState(false);
-  const [newPeso, setNewPeso]     = useState('');
-  const [saving, setSaving]       = useState(false);
+  const [newPeso, setNewPeso]       = useState('');
+  const [saving, setSaving]         = useState(false);
 
-  const load = useCallback(async () => {
+  // Suscripción en tiempo real — se actualiza sola cuando cambian los datos
+  useEffect(() => {
     if (!uid) return;
-    setLoadingH(true);
-    try { setHistory(await fetchWeightHistory(uid)); } catch {}
-    setLoadingH(false);
+    const unsub = subscribeToBodyWeightHistory(uid, (data) => {
+      // progressService devuelve {peso, fecha} → mapeamos a {weight, date}
+      setHistory(data.map(r => ({ id: r.id, weight: r.peso, date: r.fecha })));
+      setLoadingH(false);
+    });
+    return unsub;
   }, [uid]);
-
-  useEffect(() => { load(); }, [load]);
 
   const handleAdd = useCallback(async () => {
     const n = parseFloat(newPeso.replace(',', '.'));
@@ -610,10 +754,22 @@ function PesoTab({ uid, currentPeso }) {
       await addWeightEntry(uid, n);
       setNewPeso('');
       setAddVisible(false);
-      await load();
     } catch {}
     setSaving(false);
-  }, [uid, newPeso, load]);
+  }, [uid, newPeso]);
+
+  const handleDelete = useCallback((entry) => {
+    Alert.alert(
+      'Borrar registro',
+      `¿Borrar el registro de ${entry.weight} kg del ${weightDateLabel(entry.date)}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Borrar', style: 'destructive', onPress: async () => {
+          try { await deleteWeightEntry(uid, entry.date); } catch {}
+        }},
+      ],
+    );
+  }, [uid]);
 
   const visible = history.slice(-6);
   const maxW = visible.length ? Math.max(...visible.map(e => e.weight)) : 0;
@@ -625,7 +781,7 @@ function PesoTab({ uid, currentPeso }) {
 
   return (
     <View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
         <Text style={[styles.tabSectionTitle, { flex: 1, marginBottom: 0 }]}>Historial de peso</Text>
         <TouchableOpacity
           onPress={() => { setNewPeso(currentPeso ? String(currentPeso) : ''); setAddVisible(true); }}
@@ -636,6 +792,9 @@ function PesoTab({ uid, currentPeso }) {
           <Text style={{ color: colors.primary, fontSize: typography.sizes.sm, fontWeight: '600' }}>Registrar</Text>
         </TouchableOpacity>
       </View>
+      <Text style={{ color: colors.textTertiary, fontSize: typography.sizes.xs, marginBottom: spacing.md }}>
+        Podés registrar un peso por día
+      </Text>
 
       {loadingH ? (
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
@@ -680,6 +839,22 @@ function PesoTab({ uid, currentPeso }) {
             </View>
           </View>
         </>
+      )}
+
+      {/* Listado completo agrupado por mes (colapsable) */}
+      {history.length > 0 && (
+        <View style={{ marginTop: spacing.sm }}>
+          {groupWeightByMonth([...history].reverse()).map(({ label, entries }, idx) => (
+            <CollapsibleMonthGroup
+              key={label}
+              label={label}
+              entries={entries}
+              defaultExpanded={idx === 0}
+              onDelete={handleDelete}
+              colors={colors}
+            />
+          ))}
+        </View>
       )}
 
       {/* Modal registrar peso */}
@@ -782,9 +957,12 @@ function EditMedidasModal({ visible, onClose, uid, initialPeso, initialAltura, f
     setSaving(true);
     try {
       const updates = {};
-      if (peso.trim()   && !isNaN(+peso))   updates.peso   = Number(peso);
+      const pesoNum = Number(peso);
+      if (peso.trim() && !isNaN(pesoNum) && pesoNum >= 20 && pesoNum <= 300) updates.peso = pesoNum;
       if (altura.trim() && !isNaN(+altura)) updates.altura = Number(altura);
       if (Object.keys(updates).length > 0) await updateUserProfile(uid, updates);
+      // Si cambió el peso, guardarlo también en el historial de hoy
+      if (updates.peso != null) await addWeightEntry(uid, updates.peso);
       onClose();
     } catch {
       Alert.alert('Error', 'No se pudo guardar. Intentá de nuevo.');
@@ -1291,6 +1469,62 @@ function makeStyles(colors) { return StyleSheet.create({
     padding: spacing.md,
     alignItems: 'center',
     gap: 3,
+  },
+
+  // Calorías
+  calCard: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.lg,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  calLeft: {
+    alignItems: 'center',
+    minWidth: 76,
+    gap: 2,
+  },
+  calFireIcon: { fontSize: 26 },
+  calTotal: {
+    fontSize: 22,
+    fontWeight: typography.weights.black,
+    color: colors.text,
+    letterSpacing: -0.5,
+  },
+  calLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    fontWeight: typography.weights.medium,
+  },
+  calDivider: {
+    width: 0.5,
+    alignSelf: 'stretch',
+    backgroundColor: colors.border,
+    marginVertical: 4,
+  },
+  calRight: {
+    flex: 1,
+    gap: 0,
+    paddingLeft: 4,
+  },
+  calRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  calRowIcon: { fontSize: 18 },
+  calRowValue: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  calRowLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textTertiary,
   },
   coinsIcon: { fontSize: 24, marginBottom: 2 },
   miniRing: { marginBottom: 2 },

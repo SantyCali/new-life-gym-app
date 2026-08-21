@@ -1,5 +1,6 @@
 import {
   doc, setDoc, onSnapshot, updateDoc, arrayUnion,
+  collection, query, orderBy,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -26,18 +27,31 @@ export function subscribeToGymWeights(uid, onChange) {
   );
 }
 
-// Body weight history stored as an array in the user document.
-export async function addBodyWeightRecord(uid, peso) {
-  if (!uid || !(peso > 0)) return;
-  await updateDoc(doc(db, 'users', uid), {
-    pesoRegistros: arrayUnion({ peso, fecha: new Date().toISOString() }),
+// Write today's body weight to the history subcollection (called from BodyMeasurementsScreen)
+export async function addBodyWeightRecord(uid, weightKg) {
+  if (!uid || !(weightKg > 0)) return;
+  const d = new Date();
+  const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  await setDoc(doc(db, 'users', uid, 'weightHistory', date), {
+    weight: Number(weightKg), date,
   });
 }
 
+// Body weight history — reads from users/{uid}/weightHistory subcollection
+// (written by addWeightEntry in userService.js: { weight: Number, date: 'YYYY-MM-DD' })
+// Maps to { peso, fecha } format that ClientProgressScreen expects.
 export function subscribeToBodyWeightHistory(uid, onChange) {
+  const q = query(
+    collection(db, 'users', uid, 'weightHistory'),
+    orderBy('date', 'asc'),
+  );
   return onSnapshot(
-    doc(db, 'users', uid),
-    (snap) => onChange(snap.data()?.pesoRegistros ?? []),
+    q,
+    (snap) => onChange(snap.docs.map(d => ({
+      id:    d.id,
+      peso:  d.data().weight,
+      fecha: d.data().date,
+    }))),
     () => onChange([]),
   );
 }

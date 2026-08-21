@@ -18,6 +18,7 @@ import useAuth from '../hooks/useAuth';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
 
+
 const OBJETIVOS = [
   { id: 'bajar_grasa',   label: 'Bajar grasa'   },
   { id: 'ganar_musculo', label: 'Ganar músculo'  },
@@ -143,6 +144,12 @@ export default function RegisterScreen({ navigation }) {
             <Ionicons name="chevron-back" size={22} color={colors.text} />
           </TouchableOpacity>
 
+          {/* Brand */}
+          <View style={styles.brand}>
+            <View style={styles.brandDot} />
+            <Text style={styles.brandName}>New Life</Text>
+          </View>
+
           <Text style={styles.title}>Crear cuenta</Text>
           <Text style={styles.subtitle}>Completá tus datos para empezar.</Text>
 
@@ -153,7 +160,7 @@ export default function RegisterScreen({ navigation }) {
                 <Image source={{ uri: photo.uri }} style={styles.photoImage} />
               ) : (
                 <>
-                  <Ionicons name="camera-outline" size={28} color={colors.textSecondary} />
+                  <Ionicons name="camera-outline" size={28} color={colors.primary} />
                   <Text style={styles.photoLabel}>Agregar foto</Text>
                   <Text style={styles.photoOptional}>opcional</Text>
                 </>
@@ -430,7 +437,27 @@ function makeStyles(colors) { return StyleSheet.create({
     borderRadius: radius.full,
     backgroundColor: colors.surfaceContainer,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: spacing.lg,
+  },
+  brandDot: {
+    width: 10, height: 10,
+    borderRadius: radius.full,
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+  },
+  brandName: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.black,
+    color: colors.primary,
+    letterSpacing: -0.5,
   },
   title: {
     fontSize: typography.sizes['2xl'],
@@ -456,7 +483,7 @@ function makeStyles(colors) { return StyleSheet.create({
     borderRadius: 48,
     backgroundColor: colors.surfaceContainer,
     borderWidth: 2,
-    borderColor: colors.border,
+    borderColor: colors.primaryDim,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
@@ -586,7 +613,7 @@ function makeStyles(colors) { return StyleSheet.create({
   submitText: {
     fontSize: typography.sizes.base,
     fontWeight: typography.weights.bold,
-    color: colors.textInverse,
+    color: '#fff',
     letterSpacing: 0.3,
   },
   linkRow: { alignItems: 'center', paddingVertical: spacing.sm },

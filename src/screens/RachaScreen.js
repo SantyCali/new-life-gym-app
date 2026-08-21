@@ -19,6 +19,8 @@ import useAuth from '../hooks/useAuth';
 import { useStepContext } from '../context/StepContext';
 import { spacing, radius } from '../theme';
 import { fetchWeeklyStepHistory } from '../services/userService';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const { width: SW } = Dimensions.get('window');
@@ -126,16 +128,33 @@ export default function RachaScreen({ navigation }) {
   const [goalInput, setGoalInput]   = useState('');
   const [goalModalVisible, setGoalModal] = useState(false);
 
+  // Carga el goal: AsyncStorage primero (instantáneo), luego Firestore vía profile
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then(v => { if (v) setGoal(Number(v)); });
+    AsyncStorage.getItem(STORAGE_KEY).then(v => {
+      if (v) setGoal(Number(v));
+    });
   }, []);
+
+  useEffect(() => {
+    if (!profile?.dailyStepGoal) return;
+    AsyncStorage.getItem(STORAGE_KEY).then(v => {
+      // Si no hay valor local, usar el de Firestore (nuevo dispositivo)
+      if (!v) {
+        setGoal(profile.dailyStepGoal);
+        AsyncStorage.setItem(STORAGE_KEY, String(profile.dailyStepGoal));
+      }
+    });
+  }, [profile?.dailyStepGoal]);
 
   const saveGoal = useCallback((val) => {
     const n = Math.max(1000, Math.min(50000, Number(val) || DEFAULT_GOAL));
     setGoal(n);
     AsyncStorage.setItem(STORAGE_KEY, String(n));
+    if (user?.uid) {
+      updateDoc(doc(db, 'users', user.uid), { dailyStepGoal: n }).catch(() => {});
+    }
     setGoalModal(false);
-  }, []);
+  }, [user?.uid]);
 
   // ── Entry animation — ALL sections animate on mount, no scroll needed ─────
   useEffect(() => {

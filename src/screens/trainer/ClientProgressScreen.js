@@ -1,8 +1,14 @@
-import React, { useMemo, useEffect, useState } from 'react';
+import React, { useMemo, useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, ActivityIndicator,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
@@ -75,11 +81,15 @@ export default function ClientProgressScreen({ route, navigation }) {
                 <WeightSummary records={sortedPeso} colors={colors} styles={styles} />
                 <View style={styles.divider} />
                 <Text style={styles.histLabel}>Historial</Text>
-                {sortedPeso.slice(0, 10).map((r, i) => (
-                  <View key={i} style={styles.histRow}>
-                    <Text style={styles.histPeso}>{r.peso} kg</Text>
-                    <Text style={styles.histFecha}>{fmtDate(r.fecha)}</Text>
-                  </View>
+                {groupPesoByMonth(sortedPeso).map(({ label, entries }, idx) => (
+                  <CollapsiblePesoMonth
+                    key={label}
+                    label={label}
+                    entries={entries}
+                    defaultExpanded={idx === 0}
+                    colors={colors}
+                    styles={styles}
+                  />
                 ))}
               </>
             )}
@@ -106,6 +116,65 @@ export default function ClientProgressScreen({ route, navigation }) {
         </ScrollView>
       )}
     </SafeAreaView>
+  );
+}
+
+// ── Collapsible month group ───────────────────────────────────────────────────
+function CollapsiblePesoMonth({ label, entries, defaultExpanded, colors, styles }) {
+  const [expanded, setExpanded]  = useState(defaultExpanded);
+  const heightRef   = useRef(defaultExpanded ? 1000 : 0);
+  const heightAnim  = useSharedValue(defaultExpanded ? 1000 : 0);
+  const opacityAnim = useSharedValue(defaultExpanded ? 1 : 0);
+  const chevronAnim = useSharedValue(defaultExpanded ? 1 : 0);
+
+  const onContentLayout = useCallback((e) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0) {
+      heightRef.current = h;
+      if (expanded) heightAnim.value = h;
+    }
+  }, [expanded]);
+
+  const toggle = useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    heightAnim.value  = withTiming(next ? heightRef.current : 0,  { duration: 300, easing: Easing.bezier(0.4, 0, 0.2, 1) });
+    opacityAnim.value = withTiming(next ? 1 : 0, { duration: 240 });
+    chevronAnim.value = withTiming(next ? 1 : 0, { duration: 280, easing: Easing.out(Easing.ease) });
+  }, [expanded]);
+
+  const containerStyle = useAnimatedStyle(() => ({
+    height: heightAnim.value,
+    opacity: opacityAnim.value,
+    overflow: 'hidden',
+  }));
+
+  const chevronStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${chevronAnim.value * 180}deg` }],
+  }));
+
+  return (
+    <View>
+      <TouchableOpacity onPress={toggle} activeOpacity={0.7}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+      >
+        <Text style={[styles.monthLabel, { flex: 1, marginTop: 0, marginBottom: 0 }]}>{label}</Text>
+        <Animated.View style={chevronStyle}>
+          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+        </Animated.View>
+      </TouchableOpacity>
+
+      <Animated.View style={containerStyle}>
+        <View onLayout={onContentLayout}>
+          {entries.map((r, i) => (
+            <View key={i} style={styles.histRow}>
+              <Text style={styles.histPeso}>{r.peso} kg</Text>
+              <Text style={styles.histFecha}>{fmtDate(r.fecha)}</Text>
+            </View>
+          ))}
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -176,6 +245,26 @@ function gymTrend(delta, anterior, colors) {
   if (delta > 0)        return { icon: 'trending-up-outline',   iconColor: '#22c55e',            label: `+${delta.toFixed(1)} kg` };
   if (delta < 0)        return { icon: 'trending-down-outline', iconColor: '#ef4444',            label: `${delta.toFixed(1)} kg` };
   return                { icon: 'remove-outline',               iconColor: colors.textSecondary, label: 'igual que antes' };
+}
+
+const MONTH_FULL_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function groupPesoByMonth(sortedDesc) {
+  const groups = [];
+  const map = {};
+  for (const r of sortedDesc) {
+    if (!r.fecha) continue;
+    const d = new Date(r.fecha);
+    const m = d.getMonth() + 1;
+    const y = d.getFullYear();
+    const key = `${y}-${String(m).padStart(2,'0')}`;
+    if (!map[key]) {
+      map[key] = { label: `${MONTH_FULL_ES[m-1]} ${y}`, entries: [] };
+      groups.push(map[key]);
+    }
+    map[key].entries.push(r);
+  }
+  return groups;
 }
 
 function fmtDate(iso) {
@@ -249,6 +338,13 @@ function makeStyles(colors) {
       color: colors.textTertiary,
       letterSpacing: 1, textTransform: 'uppercase',
       marginBottom: spacing.sm,
+    },
+    monthLabel: {
+      fontSize: typography.sizes.xs,
+      fontWeight: typography.weights.bold,
+      color: colors.textTertiary,
+      letterSpacing: 1.2, textTransform: 'uppercase',
+      marginTop: spacing.md, marginBottom: 2,
     },
     histRow: {
       flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

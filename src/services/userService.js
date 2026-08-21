@@ -1,4 +1,4 @@
-import { doc, setDoc, updateDoc, serverTimestamp, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const USERS_COLLECTION = 'users';
@@ -57,6 +57,10 @@ export async function addWeightEntry(uid, weight) {
     weight: Number(weight), date,
   });
   await updateDoc(doc(db, USERS_COLLECTION, uid), { peso: Number(weight) });
+}
+
+export async function deleteWeightEntry(uid, date) {
+  await deleteDoc(doc(db, USERS_COLLECTION, uid, 'weightHistory', date));
 }
 
 // Returns { 'YYYY-MM-DD': stepCount } for the last 7 days

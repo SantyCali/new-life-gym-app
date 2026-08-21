@@ -29,6 +29,7 @@
 
 import { useEffect, useCallback } from 'react';
 import { View, StyleSheet, Dimensions, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -136,9 +137,10 @@ export default function PremiumTabBar({ state, navigation }) {
   const insets = useSafeAreaInsets();
   const { theme: { colors } } = useTheme();
 
-  const position = useSharedValue(state.index);
-  const indScale = useSharedValue(1);
-  const startPos = useSharedValue(0);
+  const position       = useSharedValue(state.index);
+  const indScale       = useSharedValue(1);
+  const startPos       = useSharedValue(0);
+  const lastHapticIdx  = useSharedValue(state.index);
 
   // Indicator + container colors as SharedValues so they update with theme
   const primarySV = useSharedValue(colors.primary);
@@ -159,9 +161,14 @@ export default function PremiumTabBar({ state, navigation }) {
     navigation.navigate(name);
   }, [navigation]);
 
+  const triggerHaptic = useCallback(() => {
+    Haptics.selectionAsync();
+  }, []);
+
   // Animations are started on the UI thread in TabItem's tapGesture worklet.
   // handlePress only dispatches the navigation (JS thread concern).
   const handlePress = useCallback((index) => {
+    Haptics.selectionAsync();
     navigateTo(state.routes[index].name);
   }, [state.routes, navigateTo]);
 
@@ -169,12 +176,21 @@ export default function PremiumTabBar({ state, navigation }) {
     .activeOffsetX([-8, 8])
     .failOffsetY([-14, 14])
     .onBegin(() => {
-      startPos.value = position.value;
-      indScale.value = 1;
+      'worklet';
+      startPos.value     = position.value;
+      indScale.value     = 1;
+      lastHapticIdx.value = Math.round(position.value);
     })
     .onUpdate((e) => {
-      const next = startPos.value + e.translationX / TAB_W;
-      position.value = Math.max(0, Math.min(N - 1, next));
+      'worklet';
+      const next    = startPos.value + e.translationX / TAB_W;
+      const clamped = Math.max(0, Math.min(N - 1, next));
+      position.value = clamped;
+      const rounded = Math.round(clamped);
+      if (rounded !== lastHapticIdx.value) {
+        lastHapticIdx.value = rounded;
+        runOnJS(triggerHaptic)();
+      }
     })
     .onEnd((e) => {
       const projected = position.value + (e.velocityX / TAB_W) * 0.12;
@@ -184,6 +200,7 @@ export default function PremiumTabBar({ state, navigation }) {
       // Reanimated v4: JS functions called directly from worklets are
       // automatically bridged to the JS thread by the runtime.
       if (target !== state.index) {
+        runOnJS(triggerHaptic)();
         runOnJS(navigateTo)(state.routes[target].name);
       }
     });

@@ -206,7 +206,8 @@ export function StepProvider({ children }) {
     let xpGain  = diff * XP_PER_1K_STEPS;
 
     // Daily goal bonus (only once, when crossing the threshold)
-    if (steps >= DEFAULT_GOAL && oldK * 1000 < DEFAULT_GOAL) {
+    const userGoal = profileRef.current?.dailyStepGoal ?? DEFAULT_GOAL;
+    if (steps >= userGoal && oldK * 1000 < userGoal) {
       xpGain += XP_GOAL_BONUS;
     }
 
@@ -233,6 +234,8 @@ export function StepProvider({ children }) {
     });
   }, [profile?.gymDni, user?.uid]);
 
+  const goal = profile?.dailyStepGoal ?? DEFAULT_GOAL;
+
   const value = {
     steps,
     calories,
@@ -242,8 +245,8 @@ export function StepProvider({ children }) {
     hcStatus,
     connectHealthConnect: connectHC,
     installHealthConnect: openHealthConnectInstall,
-    goal:    DEFAULT_GOAL,
-    percent: Math.min(100, Math.round((steps / DEFAULT_GOAL) * 100)),
+    goal,
+    percent: Math.min(100, Math.round((steps / goal) * 100)),
   };
 
   return <StepContext.Provider value={value}>{children}</StepContext.Provider>;

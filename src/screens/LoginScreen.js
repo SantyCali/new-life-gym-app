@@ -9,9 +9,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../firebase';
 import useAuth from '../hooks/useAuth';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
@@ -24,6 +27,42 @@ export default function LoginScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+
+  const [resetModal, setResetModal]     = useState(false);
+  const [resetEmail, setResetEmail]     = useState('');
+  const [resetSent,  setResetSent]      = useState(false);
+  const [resetError, setResetError]     = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+
+  async function handleReset() {
+    if (!resetEmail.trim()) { setResetError('Ingresá tu email.'); return; }
+    setResetLoading(true);
+    setResetError('');
+    try {
+      await sendPasswordResetEmail(auth, resetEmail.trim().toLowerCase());
+      setResetSent(true);
+    } catch (e) {
+      const code = e?.code ?? '';
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-email') {
+        setResetError('No encontramos esa cuenta. Verificá el email.');
+      } else if (code === 'auth/network-request-failed') {
+        setResetError('Sin conexión. Verificá tu internet e intentá de nuevo.');
+      } else if (code === 'auth/too-many-requests') {
+        setResetError('Demasiados intentos. Esperá unos minutos.');
+      } else {
+        setResetError('Error al enviar el email. Intentá de nuevo.');
+      }
+    } finally {
+      setResetLoading(false);
+    }
+  }
+
+  function closeReset() {
+    setResetModal(false);
+    setResetEmail('');
+    setResetSent(false);
+    setResetError('');
+  }
 
   async function handleLogin() {
     setLocalError('');
@@ -95,6 +134,15 @@ export default function LoginScreen({ navigation }) {
             }
           />
 
+          {/* Olvidé mi contraseña */}
+          <TouchableOpacity
+            style={styles.forgotRow}
+            onPress={() => { setResetEmail(email); setResetModal(true); }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text>
+          </TouchableOpacity>
+
           {!!displayError && <ErrorBox message={displayError} />}
 
           <TouchableOpacity
@@ -104,7 +152,7 @@ export default function LoginScreen({ navigation }) {
             disabled={authLoading}
           >
             {authLoading
-              ? <ActivityIndicator color={colors.textInverse} />
+              ? <ActivityIndicator color="#fff" />
               : <Text style={styles.submitText}>Iniciar sesión</Text>
             }
           </TouchableOpacity>
@@ -121,6 +169,67 @@ export default function LoginScreen({ navigation }) {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Modal recuperar contraseña */}
+      <Modal visible={resetModal} transparent animationType="fade" onRequestClose={closeReset}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closeReset}>
+          <TouchableOpacity style={styles.modalCard} activeOpacity={1} onPress={() => {}}>
+            {resetSent ? (
+              <>
+                <View style={styles.modalIconWrap}>
+                  <Ionicons name="checkmark-circle" size={48} color={colors.primary} />
+                </View>
+                <Text style={styles.modalTitle}>Email enviado</Text>
+                <Text style={styles.modalBody}>
+                  Te mandamos un link a{' '}
+                  <Text style={{ color: colors.primary, fontWeight: '700' }}>{resetEmail}</Text>
+                  {' '}para restablecer tu contraseña.{'\n\n'}
+                  Si no lo ves en unos minutos, revisá la carpeta de <Text style={{ fontWeight: '700', color: colors.text }}>Spam</Text>.
+                </Text>
+                <TouchableOpacity style={styles.modalBtn} onPress={closeReset}>
+                  <Text style={styles.modalBtnText}>Entendido</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.modalTitle}>Recuperar contraseña</Text>
+                <Text style={styles.modalBody}>
+                  Ingresá tu email y te enviamos un link para crear una nueva contraseña.
+                </Text>
+                <View style={[styles.inputBox, { marginBottom: spacing.sm }]}>
+                  <Ionicons name="mail-outline" size={18} color={colors.textTertiary} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.inputText}
+                    value={resetEmail}
+                    onChangeText={v => { setResetEmail(v); setResetError(''); }}
+                    placeholder="correo@ejemplo.com"
+                    placeholderTextColor={colors.textTertiary}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                {!!resetError && (
+                  <Text style={styles.resetError}>{resetError}</Text>
+                )}
+                <TouchableOpacity
+                  style={[styles.modalBtn, resetLoading && { opacity: 0.7 }]}
+                  onPress={handleReset}
+                  disabled={resetLoading}
+                >
+                  {resetLoading
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.modalBtnText}>Enviar link</Text>
+                  }
+                </TouchableOpacity>
+                <TouchableOpacity onPress={closeReset} style={{ marginTop: spacing.sm }}>
+                  <Text style={[styles.linkText, { textAlign: 'center' }]}>Cancelar</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -243,6 +352,12 @@ function makeStyles(colors) { return StyleSheet.create({
     paddingVertical: 14,
   },
   rightSlot: { marginLeft: 8 },
+  forgotRow: { alignItems: 'flex-end', marginBottom: spacing.lg, marginTop: -spacing.sm },
+  forgotText: {
+    fontSize: typography.sizes.sm,
+    color: colors.primary,
+    fontWeight: typography.weights.semibold,
+  },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -277,10 +392,62 @@ function makeStyles(colors) { return StyleSheet.create({
   submitText: {
     fontSize: typography.sizes.base,
     fontWeight: typography.weights.bold,
-    color: colors.textInverse,
+    color: '#fff',
     letterSpacing: 0.3,
   },
   linkRow: { alignItems: 'center', paddingVertical: spacing.sm },
   linkText: { fontSize: typography.sizes.sm, color: colors.textSecondary },
   linkAccent: { color: colors.primary, fontWeight: typography.weights.bold },
+
+  // Modal recuperar contraseña
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing['2xl'],
+  },
+  modalCard: {
+    width: '100%',
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing['2xl'],
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  modalIconWrap: { alignItems: 'center', marginBottom: spacing.lg },
+  modalTitle: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.black,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  modalBody: {
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: spacing.xl,
+  },
+  resetError: {
+    fontSize: typography.sizes.sm,
+    color: colors.danger,
+    marginBottom: spacing.sm,
+  },
+  modalBtn: {
+    backgroundColor: colors.primaryDim,
+    borderRadius: radius.full,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.primary,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+    marginTop: spacing.sm,
+  },
+  modalBtnText: {
+    fontSize: typography.sizes.base,
+    fontWeight: typography.weights.bold,
+    color: '#fff',
+  },
 }); }

@@ -1,20 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Platform, AppState, Alert } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import {
   requestPedometerPermission,
   isPedometerAvailable,
   getStepsSinceMidnight,
   watchStepCount,
-  getHCStatus,
-  checkHCPermissions,
-  initHealthConnect,
-  isMIUIDevice,
-  openHealthConnectPermissions,
-  getStepsFromHC,
   loadStepData,
   saveStepData,
   todayDateString,
-  midnightToday,
   HC_STATUS,
 } from '../services/stepService';
 
@@ -27,8 +20,6 @@ export default function useSteps() {
   );
 
   const mountedRef        = useRef(true);
-  const hcBaseRef         = useRef(0);
-  const sensorBaseRef     = useRef(null);
   const dataRef           = useRef({ date: todayDateString(), todaySteps: 0, lastAccumulated: 0 });
   const usingHCRef        = useRef(false);
   const subRef            = useRef(null);
@@ -54,34 +45,7 @@ export default function useSteps() {
     } catch {}
   }, []);
 
-  const refreshFromHC = useCallback(async () => {
-    const fresh = await getStepsFromHC(midnightToday(), new Date());
-    if (fresh !== null && mountedRef.current) {
-      hcBaseRef.current     = fresh;
-      sensorBaseRef.current = null;
-      setSteps(fresh);
-      saveStepData({ date: todayDateString(), todaySteps: fresh, lastAccumulated: 0 });
-    }
-  }, []);
-
-  // ── Android: start HC path (called on init or when HC becomes available) ────
-
-  const startHCPath = useCallback(async () => {
-    subRef.current?.remove();
-    usingHCRef.current = true;
-
-    await refreshFromHC();
-
-    subRef.current = watchStepCount(({ steps: accumulated }) => {
-      if (!mountedRef.current) return;
-      if (sensorBaseRef.current === null) sensorBaseRef.current = accumulated;
-      const total = hcBaseRef.current + Math.max(0, accumulated - sensorBaseRef.current);
-      setSteps(total);
-      saveStepData({ date: todayDateString(), todaySteps: total, lastAccumulated: accumulated });
-    });
-  }, [refreshFromHC]);
-
-  // ── Android: start fallback path ─────────────────────────────────────────────
+  // ── Android: sensor nativo TYPE_STEP_COUNTER ─────────────────────────────────
 
   const startFallbackPath = useCallback(() => {
     subRef.current?.remove();
@@ -153,11 +117,11 @@ export default function useSteps() {
       }
 
       // ── Android ────────────────────────────────────────────────────────────
-      // Even if hardware step counter is missing, Health Connect can still work.
-      // Don't bail out on !ok — always check HC first.
+      // Siempre usar el sensor nativo TYPE_STEP_COUNTER (expo-sensors Pedometer).
+      // Health Connect está completamente deshabilitado en Android.
       setAvailable(ok);
 
-      // Show cached data immediately
+      // Mostrar datos cacheados inmediatamente
       const saved = await loadStepData();
       if (saved.date === todayDateString() && mountedRef.current) {
         setSteps(saved.todaySteps);
@@ -165,53 +129,12 @@ export default function useSteps() {
       }
       setLoading(false);
 
-      // Check HC status — never call requestPermission automatically on startup
-      const status = await getHCStatus();
-      if (!mountedRef.current) return;
+      if (ok) startFallbackPath();
 
-      if (status === HC_STATUS.AVAILABLE) {
-        // Only start HC path if permission was ALREADY granted (no dialog)
-        const alreadyGranted = await checkHCPermissions();
-        if (!mountedRef.current) return;
-        if (alreadyGranted) {
-          setHcStatus(HC_STATUS.AVAILABLE);
-          setAvailable(true); // HC is our step source regardless of hardware sensor
-          await startHCPath();
-        } else {
-          setHcStatus(HC_STATUS.NOT_AUTHORIZED);
-          if (ok) startFallbackPath(); // sensor fallback only if hardware exists
-        }
-      } else {
-        setHcStatus(status);
-        if (ok) startFallbackPath(); // sensor fallback only if hardware exists
-      }
-
-      // On foreground: re-sync data AND check if HC was just installed/authorized
-      appStateSub = AppState.addEventListener('change', async (state) => {
-        if (state !== 'active' || !mountedRef.current) return;
-
-        if (usingHCRef.current) {
-          // Already on HC path: just refresh
-          refreshFromHC();
-        } else {
-          // On fallback: check if HC became available or permissions granted since last check
+      // Al volver al frente: guardar datos actuales
+      appStateSub = AppState.addEventListener('change', (state) => {
+        if (state === 'active' && mountedRef.current) {
           saveStepData(dataRef.current);
-          const newStatus = await getHCStatus();
-          if (!mountedRef.current) return;
-
-          if (newStatus === HC_STATUS.AVAILABLE) {
-            const alreadyGranted = await checkHCPermissions();
-            if (!mountedRef.current) return;
-            if (alreadyGranted) {
-              setHcStatus(HC_STATUS.AVAILABLE);
-              setAvailable(true);
-              await startHCPath();
-            } else {
-              setHcStatus(HC_STATUS.NOT_AUTHORIZED);
-            }
-          } else {
-            setHcStatus(newStatus);
-          }
         }
       });
     }
@@ -236,17 +159,9 @@ export default function useSteps() {
         if (Platform.OS === 'ios') {
           // CMPedometer returns 0 for the new day automatically
           await refreshIOS();
-        } else if (usingHCRef.current) {
-          // HC path: reset base refs; refreshFromHC will return 0 or near-0
-          hcBaseRef.current     = 0;
-          sensorBaseRef.current = null;
-          setSteps(0);
-          dataRef.current = { date: today, todaySteps: 0, lastAccumulated: 0 };
-          saveStepData(dataRef.current);
-          refreshFromHC();
         } else {
-          // Fallback: reset daily counter; keep lastAccumulated so delta stays correct.
-          // Next sensor callback will naturally continue from the current accumulated value.
+          // Sensor nativo: resetear el contador diario manteniendo lastAccumulated como base.
+          // El siguiente callback del sensor sumará el delta desde ese punto.
           dataRef.current = { ...dataRef.current, date: today, todaySteps: 0 };
           setSteps(0);
           saveStepData(dataRef.current);
@@ -264,34 +179,10 @@ export default function useSteps() {
       appStateSub?.remove();
       clearTimeout(midnightTimerRef.current);
     };
-  }, [refreshIOS, refreshFromHC, startHCPath, startFallbackPath]);
+  }, [refreshIOS, startFallbackPath]);
 
-  // Called ONLY from explicit user action (button tap) — opens the permission dialog.
-  // On MIUI (Xiaomi) requestPermission crashes the app, so we open Health Connect
-  // directly and let the AppState listener pick up the granted permission on return.
-  const connectHC = useCallback(async () => {
-    if (Platform.OS !== 'android') return;
-
-    if (isMIUIDevice()) {
-      Alert.alert(
-        'Activar Health Connect',
-        'Se va a abrir la app de Health Connect. Buscá "New Life" en la lista y activá el permiso de Pasos. Cuando vuelvas, la app lo detecta sola.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Abrir Health Connect', onPress: openHealthConnectPermissions },
-        ]
-      );
-      return;
-    }
-
-    const granted = await initHealthConnect();
-    if (!mountedRef.current) return;
-    if (granted) {
-      setHcStatus(HC_STATUS.AVAILABLE);
-      setAvailable(true);
-      await startHCPath();
-    }
-  }, [startHCPath]);
+  // No-op en Android: los pasos ya usan el sensor nativo directamente.
+  const connectHC = useCallback(async () => {}, []);
 
   return { steps, available, loading, hcStatus, connectHC };
 }

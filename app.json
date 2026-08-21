@@ -16,21 +16,28 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.newlife.app",
+      "icon": {
+        "any": "./assets/icon-light.png",
+        "dark": "./assets/icon-dark.png"
+      },
       "infoPlist": {
         "CADisableMinimumFrameDurationOnPhone": true
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#1B4EA8"
+        "foregroundImage": "./assets/icon-light.png",
+        "backgroundColor": "#FFFFFF",
+        "foregroundImageDark": "./assets/icon-dark.png",
+        "backgroundColorDark": "#0A0A0A"
       },
       "package": "com.newlife.app",
       "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
       "bundler": "metro",
-      "backgroundColor": "#0A0A0A"
+      "backgroundColor": "#0A0A0A",
+      "favicon": "./assets/favicon-light.png"
     },
     "plugins": [
       "expo-font",

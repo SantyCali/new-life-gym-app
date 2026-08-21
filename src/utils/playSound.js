@@ -1,7 +1,8 @@
 import { Audio } from 'expo-av';
 
-const GYM_SOUND     = require('../../assets/sounds/gym.wav');
+const GYM_SOUND = require('../../assets/sounds/gym.wav');
 const LEVELUP_SOUND = require('../../assets/sounds/levelup.wav');
+const LOGRO_SOUND = require('../../assets/sounds/updatepelgo-success.mp3');
 
 async function play(source) {
   try {
@@ -10,8 +11,9 @@ async function play(source) {
     sound.setOnPlaybackStatusUpdate(s => {
       if (s.didJustFinish) sound.unloadAsync();
     });
-  } catch {}
+  } catch { }
 }
 
-export const playGymSound     = () => play(GYM_SOUND);
+export const playGymSound = () => play(GYM_SOUND);
 export const playLevelUpSound = () => play(LEVELUP_SOUND);
+export const playLogroSound = () => play(LOGRO_SOUND);

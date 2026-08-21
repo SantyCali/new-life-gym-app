@@ -31,7 +31,6 @@ import { subscribeToClientRoutine } from '../services/routineService';
 import { subscribeToAnnouncement } from '../services/announcementService';
 import { MUSCLE_GROUPS } from '../constants/exercises';
 import { useStepContext } from '../context/StepContext';
-import HealthConnectBanner from '../components/ui/HealthConnectBanner';
 import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
 import { XP_GYM_VISIT } from '../services/gamificationService';
@@ -63,9 +62,15 @@ export default function HomeScreen({ navigation }) {
     setGoalModal(false);
   }, []);
 
-  const firstName   = profile?.nombre   ?? 'Atleta';
-  const streakDays  = profile?.racha    ?? 0;
-  const nivelJuego  = profile?.nivelJuego ?? 1;
+  const firstName    = profile?.nombre    ?? 'Atleta';
+  const streakDays   = profile?.racha     ?? 0;
+  const mejorRacha   = profile?.mejorRacha ?? streakDays;
+  const nivelJuego   = profile?.nivelJuego ?? 1;
+  const nextMilestone = streakDays < 7 ? 7 : streakDays < 14 ? 14 : 30;
+  const streakBadge   =
+    mejorRacha >= 30 ? 'Leyenda' :
+    mejorRacha >= 14 ? 'Campeón' :
+    mejorRacha >= 7  ? 'Guerrero' : null;
   const photoUrl    = profile?.photoBase64
     ? `data:image/jpeg;base64,${profile.photoBase64}`
     : (user?.photoURL ?? null);
@@ -161,13 +166,15 @@ export default function HomeScreen({ navigation }) {
 
   const navigateDay = doNavigate;
 
+  const { isAtGym, showGymCelebration } = useGymEvents();
+
   const [routine, setRoutine] = useState(null);
   useEffect(() => {
     if (!user?.uid) return;
     return subscribeToClientRoutine(user.uid, setRoutine);
   }, [user?.uid]);
 
-  const todayDay = routine?.dias?.[gymDayIndex ?? 0];
+  const todayDay = routine?.dias?.[profile?.gymRoutineDayIndex ?? 0];
   const todayMuscleGroups = useMemo(() => {
     const exs = todayDay?.ejercicios ?? [];
     return [...new Set(exs.map(e => {
@@ -182,8 +189,6 @@ export default function HomeScreen({ navigation }) {
   const [announcement, setAnnouncement]   = useState(null);
   const [annEditOpen,  setAnnEditOpen]    = useState(false);
   useEffect(() => subscribeToAnnouncement(setAnnouncement), []);
-
-  const { isAtGym, gymDayIndex, showGymCelebration } = useGymEvents();
 
   // Load goal from storage on focus (but don't restart ring animation needlessly)
   useFocusEffect(
@@ -365,12 +370,6 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
 
-        <HealthConnectBanner
-          hcStatus={hcStatus}
-          onInstall={installHealthConnect}
-          onConnect={connectHealthConnect}
-          colors={colors}
-        />
 
         {/* ── Racha ── */}
         <TouchableOpacity
@@ -381,7 +380,11 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.rachaHeader}>
             <View>
               <Text style={styles.rachaTitle}>Racha de {streakDays} días 🔥</Text>
-              <Text style={styles.rachaSubtitle}>Mejor Racha: 14 · Campeón</Text>
+              <Text style={styles.rachaSubtitle}>
+                {mejorRacha > 0
+                  ? `Mejor Racha: ${mejorRacha}${streakBadge ? ` · ${streakBadge}` : ''}`
+                  : 'Empezá tu primera racha'}
+              </Text>
             </View>
             <View style={styles.rachaBadge}>
               <Text style={styles.rachaBadgeText}>{streakDays}</Text>
@@ -391,13 +394,13 @@ export default function HomeScreen({ navigation }) {
             <View
               style={[
                 styles.rachaBarFill,
-                { width: `${Math.min((streakDays / 30) * 100, 100)}%` },
+                { width: `${Math.min((streakDays / nextMilestone) * 100, 100)}%` },
               ]}
             />
           </View>
           <View style={styles.rachaFooter}>
             <Text style={styles.rachaFooterText}>0</Text>
-            <Text style={styles.rachaFooterText}>30 días</Text>
+            <Text style={styles.rachaFooterText}>{nextMilestone} días</Text>
           </View>
         </TouchableOpacity>
 

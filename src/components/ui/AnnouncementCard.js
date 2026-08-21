@@ -72,7 +72,7 @@ export default function AnnouncementCard({ announcement, colors, onPress }) {
       />
 
       <LinearGradient
-        colors={[p + '28', '#0D1518F0']}
+        colors={[p + '22', colors.surface + 'F4']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={st.card}
@@ -95,7 +95,7 @@ export default function AnnouncementCard({ announcement, colors, onPress }) {
 
         <View style={st.body}>
           {/* Icon */}
-          <View style={[st.iconWrap, { backgroundColor: '#192124', borderColor: p + '45' }]}>
+          <View style={[st.iconWrap, { backgroundColor: colors.surfaceElevated, borderColor: p + '45' }]}>
             <View style={[StyleSheet.absoluteFillObject, st.iconTint, { backgroundColor: p + '18' }]} />
             <Animated.View style={{ transform: [{ scale: iconScale }] }}>
               <Ionicons name="megaphone" size={28} color={p} />
