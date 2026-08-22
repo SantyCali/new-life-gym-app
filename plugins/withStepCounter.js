@@ -102,21 +102,24 @@ function withPackageRegistration(config) {
   return withMainApplication(config, (config) => {
     let contents = config.modResults.contents;
 
-    const importLine = 'import com.newlife.app.StepCounterPackage';
-    if (!contents.includes(importLine)) {
-      // Inserta el import junto a los otros de expo
-      contents = contents.replace(
-        'import expo.modules.ReactNativeHostWrapper',
-        `${importLine}\nimport expo.modules.ReactNativeHostWrapper`
-      );
-    }
+    // StepCounterPackage está en el mismo paquete (com.newlife.app),
+    // por eso no hace falta agregar un import.
 
-    const addLine = 'packages.add(StepCounterPackage())';
+    const addLine = 'add(StepCounterPackage())';
     if (!contents.includes(addLine)) {
-      contents = contents.replace(
-        'val packages = PackageList(this).packages',
-        `val packages = PackageList(this).packages\n        ${addLine}`
-      );
+      // Patrón moderno RN 0.73+: PackageList(this).packages.apply { ... }
+      if (contents.includes('// add(MyReactNativePackage())')) {
+        contents = contents.replace(
+          '// add(MyReactNativePackage())',
+          `// add(MyReactNativePackage())\n              add(StepCounterPackage())`
+        );
+      } else {
+        // Patrón legacy: val packages = PackageList(this).packages
+        contents = contents.replace(
+          'val packages = PackageList(this).packages',
+          `val packages = PackageList(this).packages\n        packages.add(StepCounterPackage())`
+        );
+      }
     }
 
     config.modResults.contents = contents;

@@ -43,10 +43,10 @@ class StepCounterService : Service(), SensorEventListener {
         stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
     }
 
+    @Suppress("DEPRECATION")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         loadSavedData()
 
-        @Suppress("DEPRECATION")
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
                 NOTIFICATION_ID,
@@ -165,7 +165,7 @@ class StepCounterService : Service(), SensorEventListener {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("New Life")
             .setContentText("$steps pasos hoy")
-            .setSmallIcon(android.R.drawable.ic_menu_directions)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setSilent(true)
