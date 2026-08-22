@@ -111,7 +111,7 @@ export default function HomeScreen({ navigation }) {
   const displayWalkH   = Math.floor(displayWalkMin / 60);
   const displayWalkM   = displayWalkMin % 60;
   const walkLabel      = displayWalkH > 0 ? `${displayWalkH}h ${displayWalkM}m` : `${displayWalkM}m`;
-  const displayCalories = isHistoryMode
+  const baseCalories = isHistoryMode
     ? Math.round(safeSteps * 0.04 * (weightKgHome / 70))
     : (Number.isFinite(realCalories) ? realCalories : 0);
 
@@ -167,6 +167,18 @@ export default function HomeScreen({ navigation }) {
   const navigateDay = doNavigate;
 
   const { isAtGym, showGymCelebration } = useGymEvents();
+
+  // Calorías totales: caminata + gym (solo si ya salió del gym hoy)
+  const gymMinHoy = useMemo(() => {
+    if (isHistoryMode || isAtGym) return 0;
+    const d = new Date();
+    const hoy = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return profile?.gymTodayDate === hoy && (profile?.gymTodayMinutes ?? 0) > 0
+      ? profile.gymTodayMinutes
+      : 0;
+  }, [isHistoryMode, isAtGym, profile?.gymTodayDate, profile?.gymTodayMinutes]);
+
+  const displayCalories = baseCalories + (gymMinHoy > 0 ? Math.round(5.0 * weightKgHome * gymMinHoy / 60) : 0);
 
   const [routine, setRoutine] = useState(null);
   useEffect(() => {
