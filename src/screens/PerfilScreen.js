@@ -66,14 +66,20 @@ const NIVEL_LABEL = {
   avanzado:     'Avanzado',
 };
 
-function calcCalorias(pesoKg, stepsHoy, gymMinutos) {
-  const kg   = pesoKg   > 0 ? pesoKg   : 70;
-  const steps = stepsHoy > 0 ? stepsHoy : 0;
-  const gym  = gymMinutos > 0 ? gymMinutos : 0;
-  // MET 3.5 = caminata cómoda → kcal = MET × kg × horas
-  const calPasos = Math.round(3.5 * kg * steps / 6000);
+function calcCalorias(pesoKg, alturaCm, edadAnios, stepsHoy, gymMinutos) {
+  const kg    = pesoKg    > 0 ? pesoKg    : 70;
+  const cm    = alturaCm  > 0 ? alturaCm  : 170;
+  const edad  = edadAnios > 0 ? edadAnios : 30;
+  const steps = stepsHoy  > 0 ? stepsHoy  : 0;
+  const gym   = gymMinutos > 0 ? gymMinutos : 0;
+  // Factor de edad: metabolismo baja ~0.3% por año a partir de los 30
+  const ageFactor = Math.max(0.88, Math.min(1.10, 1 + (30 - Math.max(15, Math.min(70, edad))) * 0.003));
+  // Factor de altura: paso más largo en personas más altas → más kcal por paso
+  const heightFactor = Math.max(0.92, Math.min(1.08, 1 + (cm - 170) * 0.003));
+  // MET 3.5 = caminata cómoda (100 pasos/min ≈ 6000 pasos/hora)
+  const calPasos = Math.round(3.5 * kg * steps / 6000 * heightFactor * ageFactor);
   // MET 5.0 = entrenamiento moderado con pesas
-  const calGym   = Math.round(5.0 * kg * gym  / 60);
+  const calGym   = Math.round(5.0 * kg * gym  / 60   * ageFactor);
   return { calPasos, calGym, total: calPasos + calGym };
 }
 
@@ -136,8 +142,11 @@ export default function PerfilScreen({ navigation }) {
       : 0;
     // Pasos: usa valor en tiempo real del sensor; fallback a Firestore si es mayor
     const steps = Math.max(liveSteps ?? 0, profile?.stepsToday ?? 0);
-    return { caloriasData: calcCalorias(profile?.peso ?? 70, steps, minHoy), gymMinHoy: minHoy };
-  }, [profile?.peso, profile?.stepsToday, profile?.gymTodayDate, profile?.gymTodayMinutes, isAtGym, liveSteps]);
+    return {
+      caloriasData: calcCalorias(profile?.peso ?? 70, profile?.altura ?? 170, edad ?? 30, steps, minHoy),
+      gymMinHoy: minHoy,
+    };
+  }, [profile?.peso, profile?.altura, profile?.stepsToday, profile?.gymTodayDate, profile?.gymTodayMinutes, isAtGym, liveSteps, edad]);
 
   const sexo  = profile?.sexo
     ? (profile.sexo === 'masculino' ? 'Masc.' : 'Fem.')

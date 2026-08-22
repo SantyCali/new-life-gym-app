@@ -1,10 +1,10 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
-import { subscribeToUserPresence, advanceRoutineDay } from '../services/gymService';
+import { subscribeToUserPresence, advanceRoutineDay, ACTIVE_MS } from '../services/gymService';
 import { subscribeToClientRoutine } from '../services/routineService';
 import { checkAndAwardGymReward, XP_GYM_VISIT } from '../services/gamificationService';
 import { subscribeToAnnouncement } from '../services/announcementService';
@@ -48,13 +48,15 @@ export function GymEventsProvider({ children }) {
   const [gymDayIndex, setGymDayIndex]   = useState(0);
   const [routine, setRoutine]           = useState(null);
 
-  const prevIsAtGymRef    = useRef(false);
-  const prevLevelRef      = useRef(null);
-  const pendingAdvanceRef = useRef(false);
-  const logrosInitRef     = useRef(false);
-  const prevLogrosRef     = useRef(new Set());
-  const logrosResetTimers = useRef({});
-  const gymEntryTimeRef   = useRef(null);
+  const prevIsAtGymRef       = useRef(false);
+  const prevLevelRef         = useRef(null);
+  const pendingAdvanceRef    = useRef(false);
+  const logrosInitRef        = useRef(false);
+  const prevLogrosRef        = useRef(new Set());
+  const logrosResetTimers    = useRef({});
+  const gymEntryTimeRef      = useRef(null);
+  const latestGymCheckinMsRef = useRef(0);
+  const isAtGymRef           = useRef(false);
 
   // Announcement → local notification (solo en builds, no en Expo Go SDK 53+)
   useEffect(() => {
@@ -114,12 +116,32 @@ export function GymEventsProvider({ children }) {
     }
   }, [profile?.gymRoutineDayIndex]);
 
+  // Mantener ref sincronizada para el AppState listener (evita stale closure)
+  isAtGymRef.current = isAtGym;
+
   // Gym presence subscription
   useEffect(() => {
     const dni = profile?.gymDni;
     if (!dni) return;
-    return subscribeToUserPresence(dni, setIsAtGym);
+    return subscribeToUserPresence(dni, (present, checkinMs) => {
+      setIsAtGym(present);
+      if (checkinMs) latestGymCheckinMsRef.current = checkinMs;
+    });
   }, [profile?.gymDni]);
+
+  // Cuando la app vuelve al frente, re-verificar si la sesión de gym ya expiró.
+  // El setTimeout interno no dispara cuando la app está en background en Android.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state !== 'active') return;
+      if (!isAtGymRef.current) return;
+      const checkinMs = latestGymCheckinMsRef.current;
+      if (checkinMs && Date.now() - checkinMs > ACTIVE_MS) {
+        setIsAtGym(false);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Gym check-in / check-out
   useEffect(() => {

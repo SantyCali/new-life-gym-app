@@ -6,7 +6,7 @@ import { db } from '../firebase';
 import { todayDateString } from './stepService';
 
 const COL = collection(db, 'ingresosActivos');
-const ACTIVE_MS = 90 * 60 * 1000; // 1 h 30 min
+export const ACTIVE_MS = 90 * 60 * 1000; // 1 h 30 min
 const ACTIVE_CUTOFF = () => Timestamp.fromMillis(Date.now() - ACTIVE_MS);
 
 export function subscribeToGymCheckins(onData) {
@@ -236,15 +236,15 @@ export function subscribeToUserPresence(gymDni, onPresent) {
       return ms > midnightMs && ms > cutoffMs;
     });
 
-    onPresent(present);
+    onPresent(present, latestCheckinMs);
 
     if (present && latestCheckinMs > 0) {
       const remaining = ACTIVE_MS - (Date.now() - latestCheckinMs);
-      if (remaining > 0) expiryTimer = setTimeout(() => onPresent(false), remaining);
+      if (remaining > 0) expiryTimer = setTimeout(() => onPresent(false, latestCheckinMs), remaining);
     }
   }, err => {
     console.error('[GymPresence] Firestore error:', err.code, err.message);
-    onPresent(false);
+    onPresent(false, 0);
   });
 
   return () => { if (expiryTimer) clearTimeout(expiryTimer); unsub(); };
