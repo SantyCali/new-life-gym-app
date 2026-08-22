@@ -50,7 +50,7 @@ export function AuthProvider({ children }) {
           isFirstAuthRef.current = false;
           const hadSession = await AsyncStorage.getItem(SESSION_KEY).catch(() => null);
           if (hadSession) {
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 800));
             if (auth.currentUser) return; // el SDK restauró la sesión; onAuthStateChanged va a volver a disparar
           }
         }

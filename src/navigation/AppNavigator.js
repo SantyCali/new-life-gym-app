@@ -1,4 +1,3 @@
-import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import TabNavigator from './TabNavigator';
@@ -17,6 +16,7 @@ import TorneosScreen from '../screens/TorneosScreen';
 import TorneoDetailScreen from '../screens/TorneoDetailScreen';
 import useAuth from '../hooks/useAuth';
 import { useTheme } from '../context/ThemeContext';
+import SplashLoader from '../components/ui/SplashLoader';
 import usePushNotifications from '../hooks/usePushNotifications';
 import { GymEventsProvider } from '../context/GymEventsContext';
 
@@ -40,13 +40,7 @@ export default function AppNavigator() {
     },
   };
 
-  if (initializing) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
+  if (initializing) return <SplashLoader />;
 
   return (
     <NavigationContainer theme={navTheme}>
