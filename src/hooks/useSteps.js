@@ -24,6 +24,7 @@ export default function useSteps() {
   const usingHCRef        = useRef(false);
   const subRef            = useRef(null);
   const midnightTimerRef  = useRef(null);
+  const lastCallbackMsRef = useRef(0);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ export default function useSteps() {
 
     subRef.current = watchStepCount(({ steps: accumulated }) => {
       if (!mountedRef.current) return;
+      lastCallbackMsRef.current = Date.now();
       const { date: lastDate, todaySteps: prevToday, lastAccumulated: prevAcc } = dataRef.current;
       const currentDate = todayDateString();
 
@@ -131,11 +133,14 @@ export default function useSteps() {
 
       if (ok) startFallbackPath();
 
-      // Al volver al frente: re-registrar el listener para capturar el delta acumulado
-      // en hardware mientras la pantalla estuvo bloqueada o la app minimizada.
+      // Al volver al frente: re-registrar el listener solo si no llegó ningún callback
+      // en los últimos 3 s (la suscripción podría haber muerto mientras la pantalla
+      // estuvo bloqueada). Si la suscripción sigue viva, los callbacks en cola ya
+      // llegaron antes de que dispare este handler → no tocar nada.
       appStateSub = AppState.addEventListener('change', (state) => {
-        if (state === 'active' && mountedRef.current) {
-          if (ok) startFallbackPath();
+        if (state === 'active' && mountedRef.current && ok) {
+          const msSinceLast = Date.now() - lastCallbackMsRef.current;
+          if (msSinceLast > 3000) startFallbackPath();
         }
       });
     }

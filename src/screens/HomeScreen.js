@@ -46,10 +46,55 @@ export default function HomeScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, isTrainer } = useAuth();
   const { profile } = useUserProfile();
-  const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect } = useStepContext();
+  const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading } = useStepContext();
   const { activeCount: gymCount } = useGymCheckins();
 
   const weightKgHome = profile?.peso ? Number(profile.peso) : 70;
+
+  // ── Animación del contador de pasos ──────────────────────────────────────────
+  const [animSteps, setAnimSteps]   = useState(0);
+  const animRef                     = useRef({ value: 0, target: -1 });
+  const animTimerRef                = useRef(null);
+  const stepsLoadedRef              = useRef(false);
+
+  useEffect(() => {
+    if (dayOffset !== 0) {
+      clearTimeout(animTimerRef.current);
+      return; // modo historia: animSteps no se usa
+    }
+    if (stepsLoading || !stepsLoadedRef.current) {
+      if (!stepsLoading) stepsLoadedRef.current = true;
+      clearTimeout(animTimerRef.current);
+      setAnimSteps(realSteps);
+      animRef.current.value  = realSteps;
+      animRef.current.target = realSteps;
+      return;
+    }
+    if (realSteps === animRef.current.target) return;
+    const from = animRef.current.value;
+    const to   = realSteps;
+    clearTimeout(animTimerRef.current);
+    animRef.current.target = to;
+    if (to <= from) {
+      animRef.current.value = to;
+      setAnimSteps(to);
+      return;
+    }
+    const diff      = to - from;
+    const duration  = Math.min(700, Math.max(200, diff * 12));
+    const startTime = Date.now();
+    const tick = () => {
+      const elapsed  = Date.now() - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const eased    = 1 - (1 - progress) ** 2;
+      const val      = Math.round(from + diff * eased);
+      animRef.current.value = val;
+      setAnimSteps(val);
+      if (progress < 1) animTimerRef.current = setTimeout(tick, 16);
+    };
+    tick();
+    return () => clearTimeout(animTimerRef.current);
+  }, [realSteps, dayOffset, stepsLoading]);
 
   const [goal, setGoal]                     = useState(todayStats.stepsGoal);
   const [goalInput, setGoalInput]           = useState('');
@@ -91,7 +136,7 @@ export default function HomeScreen({ navigation }) {
   };
 
   const displaySteps = dayOffset === 0
-    ? realSteps
+    ? animSteps
     : (historyMap[getOffsetDate(dayOffset).toISOString().split('T')[0]] ?? 0);
 
   const displayPercent = Math.min(100, Math.round((displaySteps / goal) * 100));
