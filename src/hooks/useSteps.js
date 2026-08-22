@@ -131,10 +131,11 @@ export default function useSteps() {
 
       if (ok) startFallbackPath();
 
-      // Al volver al frente: guardar datos actuales
+      // Al volver al frente: re-registrar el listener para capturar el delta acumulado
+      // en hardware mientras la pantalla estuvo bloqueada o la app minimizada.
       appStateSub = AppState.addEventListener('change', (state) => {
         if (state === 'active' && mountedRef.current) {
-          saveStepData(dataRef.current);
+          if (ok) startFallbackPath();
         }
       });
     }
