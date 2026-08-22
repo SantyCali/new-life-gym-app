@@ -538,8 +538,8 @@ function gymStatusColor(count) {
 function gymStatusLabel(count) {
   if (count === 0) return 'Sin gente por ahora';
   if (count === 1) return '1 persona';
-  if (count <= 5)  return `${count} personas · Tranquilo`;
-  if (count <= 15) return `${count} personas · Moderado`;
+  if (count <= 14) return `${count} personas · Tranquilo`;
+  if (count <= 21) return `${count} personas · Moderado`;
   return `${count} personas · Lleno`;
 }
 

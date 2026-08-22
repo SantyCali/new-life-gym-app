@@ -526,9 +526,9 @@ function QuotaSections({ data, search, colors, styles, spacing, refreshing, onRe
 
 function statusFor(count) {
   if (count === 0)  return { label: 'Vacío',      color: '#6B7280', emoji: '😴' };
-  if (count <= 5)   return { label: 'Tranquilo',  color: '#22C55E', emoji: '🟢' };
-  if (count <= 15)  return { label: 'Moderado',   color: '#EAB308', emoji: '🟡' };
-  return              { label: 'Concurrido', color: '#EF4444', emoji: '🔴' };
+  if (count <= 14)  return { label: 'Tranquilo',  color: '#22C55E', emoji: '🟢' };
+  if (count <= 21)  return { label: 'Moderado',   color: '#EAB308', emoji: '🟡' };
+  return              { label: 'Lleno',      color: '#EF4444', emoji: '🔴' };
 }
 
 function minutesAgo(timestamp) {
