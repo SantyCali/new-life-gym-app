@@ -18,7 +18,13 @@ try {
     persistence: getReactNativePersistence(AsyncStorage),
   });
 } catch (error) {
-  auth = getAuth(app);
+  // Solo reutilizar la instancia existente si ya fue inicializada (Fast Refresh).
+  // Cualquier otro error se re-lanza para no silenciar problemas de persistencia.
+  if (error.code === 'auth/already-initialized') {
+    auth = getAuth(app);
+  } else {
+    throw error;
+  }
 }
 export { auth };
 

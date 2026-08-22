@@ -1,7 +1,10 @@
-import { createContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useEffect, useState, useCallback, useRef } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../firebase';
+
+const SESSION_KEY = 'nlg_session_active';
 import {
   registerWithEmail,
   loginWithEmail,
@@ -17,10 +20,13 @@ export function AuthProvider({ children }) {
   const [initializing, setInitializing] = useState(true);
   const [authLoading, setAuthLoading]   = useState(false);
   const [authError, setAuthError]       = useState(null);
+  const isFirstAuthRef = useRef(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        // Sesión activa — guardar flag para el retry al próximo arranque
+        AsyncStorage.setItem(SESSION_KEY, '1').catch(() => {});
         try {
           const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
           const data  = snap.exists() ? snap.data() : {};
@@ -34,12 +40,26 @@ export function AuthProvider({ children }) {
           setIsTrainer(false);
           setIsTester(false);
         }
+        isFirstAuthRef.current = false;
+        setUser(firebaseUser);
+        setInitializing(false);
       } else {
+        // Firebase dice null — si es el primer evento y había sesión guardada,
+        // esperar 2 s para que el SDK termine de refrescar el token (error de red transitorio).
+        if (isFirstAuthRef.current) {
+          isFirstAuthRef.current = false;
+          const hadSession = await AsyncStorage.getItem(SESSION_KEY).catch(() => null);
+          if (hadSession) {
+            await new Promise(r => setTimeout(r, 2000));
+            if (auth.currentUser) return; // el SDK restauró la sesión; onAuthStateChanged va a volver a disparar
+          }
+        }
+        AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
         setIsTrainer(false);
         setIsTester(false);
+        setUser(null);
+        setInitializing(false);
       }
-      setUser(firebaseUser);
-      setInitializing(false);
     });
     return unsubscribe;
   }, []);
@@ -74,6 +94,7 @@ export function AuthProvider({ children }) {
     setAuthError(null);
     setAuthLoading(true);
     try {
+      await AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
       await logoutService();
     } catch (error) {
       setAuthError(error.message);
