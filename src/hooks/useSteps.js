@@ -10,6 +10,11 @@ import {
   todayDateString,
   HC_STATUS,
 } from '../services/stepService';
+import {
+  nativeServiceAvailable,
+  startNativeStepService,
+  getNativeSteps,
+} from '../services/nativeStepService';
 
 export default function useSteps() {
   const [steps, setSteps]         = useState(0);
@@ -25,6 +30,7 @@ export default function useSteps() {
   const subRef            = useRef(null);
   const midnightTimerRef  = useRef(null);
   const lastCallbackMsRef = useRef(0);
+  const pollIntervalRef   = useRef(null);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,15 +52,12 @@ export default function useSteps() {
     } catch {}
   }, []);
 
-  // ── Android: sensor nativo TYPE_STEP_COUNTER ─────────────────────────────────
+  // ── Android: sensor expo-sensors (fallback cuando el Foreground Service no está disponible)
 
   const startFallbackPath = useCallback(() => {
     subRef.current?.remove();
     usingHCRef.current = false;
 
-    // If both todaySteps and lastAccumulated are 0, we have no valid baseline yet.
-    // The first sensor callback will give us the cumulative steps since device boot,
-    // which may include steps from previous days — we must use it as a base, not count them.
     const needsBaseInit =
       dataRef.current.todaySteps === 0 && dataRef.current.lastAccumulated === 0;
     let baseInitialized = !needsBaseInit;
@@ -65,28 +68,20 @@ export default function useSteps() {
       const { date: lastDate, todaySteps: prevToday, lastAccumulated: prevAcc } = dataRef.current;
       const currentDate = todayDateString();
 
-      // Midnight rolled over — reset to 0 and use this reading as the new base
       if (currentDate !== lastDate) {
         setAndPersist(0, accumulated);
         baseInitialized = true;
         return;
       }
-
-      // Phone rebooted: sensor counter reset below our saved baseline
       if (accumulated < prevAcc) {
         setAndPersist(prevToday + accumulated, accumulated);
         return;
       }
-
-      // First reading of a fresh session with no prior data for today.
-      // Use this reading as our baseline — don't add these steps as "today's".
       if (!baseInitialized) {
         baseInitialized = true;
         setAndPersist(0, accumulated);
         return;
       }
-
-      // Normal: add delta since last reading
       setAndPersist(prevToday + (accumulated - prevAcc), accumulated);
     });
   }, [setAndPersist]);
@@ -98,14 +93,12 @@ export default function useSteps() {
     let appStateSub;
 
     async function init() {
-      // Ask for motion/activity permission upfront (required on Android 10+)
       await requestPedometerPermission();
-
-      const ok = await isPedometerAvailable();
-      if (!mountedRef.current) return;
 
       // ── iOS ────────────────────────────────────────────────────────────────
       if (Platform.OS === 'ios') {
+        const ok = await isPedometerAvailable();
+        if (!mountedRef.current) return;
         setAvailable(ok);
         if (!ok) { setLoading(false); return; }
         await refreshIOS();
@@ -118,12 +111,52 @@ export default function useSteps() {
         return;
       }
 
-      // ── Android ────────────────────────────────────────────────────────────
-      // Siempre usar el sensor nativo TYPE_STEP_COUNTER (expo-sensors Pedometer).
-      // Health Connect está completamente deshabilitado en Android.
+      // ── Android: Foreground Service nativo ─────────────────────────────────
+      // Si el APK incluye el servicio nativo (nativeServiceAvailable = true),
+      // el servicio cuenta pasos 24/7 aunque la app esté cerrada o la pantalla
+      // bloqueada. El JS solo lee los pasos del servicio vía polling.
+      if (nativeServiceAvailable) {
+        setAvailable(true);
+
+        // Arrancar el servicio (si ya está corriendo, el intent es ignorado)
+        await startNativeStepService();
+
+        // Leer pasos iniciales
+        const initial = await getNativeSteps();
+        if (mountedRef.current) setSteps(initial);
+        setLoading(false);
+
+        // Poll cada 2 s cuando la app está en primer plano
+        const startPoll = () => {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = setInterval(async () => {
+            if (!mountedRef.current) return;
+            const s = await getNativeSteps();
+            if (mountedRef.current) setSteps(s);
+          }, 2000);
+        };
+        startPoll();
+
+        appStateSub = AppState.addEventListener('change', async (state) => {
+          if (!mountedRef.current) return;
+          if (state === 'active') {
+            // Leer inmediatamente al volver al frente
+            const s = await getNativeSteps();
+            if (mountedRef.current) setSteps(s);
+            startPoll();
+          } else if (state === 'background' || state === 'inactive') {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+        });
+        return;
+      }
+
+      // ── Android: fallback con expo-sensors (sin Foreground Service) ────────
+      const ok = await isPedometerAvailable();
+      if (!mountedRef.current) return;
       setAvailable(ok);
 
-      // Mostrar datos cacheados inmediatamente
       const saved = await loadStepData();
       if (saved.date === todayDateString() && mountedRef.current) {
         setSteps(saved.todaySteps);
@@ -133,10 +166,6 @@ export default function useSteps() {
 
       if (ok) startFallbackPath();
 
-      // Al volver al frente: re-registrar el listener solo si no llegó ningún callback
-      // en los últimos 3 s (la suscripción podría haber muerto mientras la pantalla
-      // estuvo bloqueada). Si la suscripción sigue viva, los callbacks en cola ya
-      // llegaron antes de que dispare este handler → no tocar nada.
       appStateSub = AppState.addEventListener('change', (state) => {
         if (state === 'active' && mountedRef.current && ok) {
           const msSinceLast = Date.now() - lastCallbackMsRef.current;
@@ -145,13 +174,9 @@ export default function useSteps() {
       });
     }
 
-    // ── Midnight auto-reset ───────────────────────────────────────────────────
-    // One precise setTimeout to fire at exactly 00:00:00, then reschedule itself.
-    // No polling, no interval — only fires when the app is actively open at midnight.
-    // AppState 'active' already handles the case where midnight passed in background.
-
+    // Midnight reset para iOS y el fallback de Android
     function msUntilMidnight() {
-      const now = new Date();
+      const now  = new Date();
       const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
       return next.getTime() - now.getTime();
     }
@@ -160,20 +185,16 @@ export default function useSteps() {
       clearTimeout(midnightTimerRef.current);
       midnightTimerRef.current = setTimeout(async () => {
         if (!mountedRef.current) return;
-        const today = todayDateString(); // now it's the new day
-
         if (Platform.OS === 'ios') {
-          // CMPedometer returns 0 for the new day automatically
           await refreshIOS();
-        } else {
-          // Sensor nativo: resetear el contador diario manteniendo lastAccumulated como base.
-          // El siguiente callback del sensor sumará el delta desde ese punto.
+        } else if (!nativeServiceAvailable) {
+          const today = todayDateString();
           dataRef.current = { ...dataRef.current, date: today, todaySteps: 0 };
           setSteps(0);
           saveStepData(dataRef.current);
         }
-
-        scheduleReset(); // arm for the next midnight
+        // Con Foreground Service: el servicio Kotlin maneja el reset de medianoche solo.
+        scheduleReset();
       }, msUntilMidnight());
     }
 
@@ -181,13 +202,13 @@ export default function useSteps() {
 
     return () => {
       mountedRef.current = false;
+      clearInterval(pollIntervalRef.current);
       subRef.current?.remove();
       appStateSub?.remove();
       clearTimeout(midnightTimerRef.current);
     };
   }, [refreshIOS, startFallbackPath]);
 
-  // No-op en Android: los pasos ya usan el sensor nativo directamente.
   const connectHC = useCallback(async () => {}, []);
 
   return { steps, available, loading, hcStatus, connectHC };
