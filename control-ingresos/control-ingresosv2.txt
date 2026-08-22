@@ -1,4 +1,4 @@
-// 1. Genera la interfaz web
+﻿// 1. Genera la interfaz web
 function doGet() {
   return HtmlService.createHtmlOutput(obtenerDisenoHtml())
     .setTitle("Control de Acceso - NLG")
@@ -301,7 +301,7 @@ function obtenerDisenoHtml() {
         
         <button class="btn btn-borrar-todo" onclick="borrarTodo()">C</button>
         <button class="btn" onclick="presionar('0')">0</button>
-        <button class="btn btn-borrar-uno" onclick="borrarUno()">←</button>
+        <button class="btn btn-borrar-uno" onclick="borrarUno()">←</button>
         
         <button class="btn btn-enviar" onclick="enviar()">ENTRAR</button>
       </div>
@@ -416,7 +416,7 @@ function obtenerDisenoHtml() {
         
         setTimeout(function(){
           respuesta.className = "overlay";
-        }, 6000);
+        }, 3000);
       }
     </script>
   </body>
