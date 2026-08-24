@@ -3,51 +3,53 @@ import { View, Text, Switch, StyleSheet, Alert, Platform } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
-import { nativeServiceAvailable, startNativeStepService, stopNativeStepService } from '../services/nativeStepService';
-
-const STEP_SERVICE_DISABLED_KEY = 'STEP_SERVICE_DISABLED';
+import {
+  nativeServiceAvailable,
+  getNotificationSilent,
+  setNotificationSilent,
+} from '../services/nativeStepService';
 
 export default function SettingsScreen({ navigation }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  const [serviceEnabled, setServiceEnabled] = useState(true);
+  // notificationVisible = true → notificación normal visible
+  // notificationVisible = false → canal silencioso (sin ícono en barra)
+  // En ambos casos el servicio corre y los pasos se cuentan
+  const [notificationVisible, setNotificationVisible] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    AsyncStorage.getItem(STEP_SERVICE_DISABLED_KEY).then((val) => {
-      setServiceEnabled(val !== 'true');
+    if (!nativeServiceAvailable) { setLoading(false); return; }
+    getNotificationSilent().then((isSilent) => {
+      setNotificationVisible(!isSilent);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    });
   }, []);
 
   function handleToggle(newValue) {
     if (!newValue) {
-      // Usuario quiere desactivar
+      // Quiere ocultar la notificación
       Alert.alert(
-        'Desactivar servicio de pasos',
-        'Sin el servicio activo, los pasos dejarán de contarse cuando la app esté cerrada o en segundo plano. ¿Estás seguro?',
+        'Ocultar notificación de pasos',
+        'Los pasos seguirán contándose en segundo plano, pero la notificación dejará de aparecer en la barra de estado y pantalla de bloqueo.\n\n¿Estás seguro?',
         [
           { text: 'Cancelar', style: 'cancel' },
           {
-            text: 'Desactivar',
+            text: 'Ocultar',
             style: 'destructive',
-            onPress: async () => {
-              await AsyncStorage.setItem(STEP_SERVICE_DISABLED_KEY, 'true');
-              setServiceEnabled(false);
-              stopNativeStepService().catch(() => {});
+            onPress: () => {
+              setNotificationVisible(false);
+              setNotificationSilent(true);
             },
           },
         ]
       );
     } else {
-      // Activar
-      AsyncStorage.setItem(STEP_SERVICE_DISABLED_KEY, 'false').catch(() => {});
-      setServiceEnabled(true);
-      startNativeStepService().catch(() => {});
+      setNotificationVisible(true);
+      setNotificationSilent(false);
     }
   }
 
@@ -73,22 +75,24 @@ export default function SettingsScreen({ navigation }) {
                 <Ionicons name="notifications-outline" size={20} color={colors.primary} />
               </View>
               <View style={styles.rowBody}>
-                <Text style={styles.rowTitle}>Notificación de pasos</Text>
+                <Text style={styles.rowTitle}>Notificación en pantalla de bloqueo</Text>
                 <Text style={styles.rowSub}>
-                  {serviceEnabled
-                    ? 'Activa · Cuenta pasos en segundo plano'
-                    : 'Inactiva · Los pasos no se cuentan en segundo plano'}
+                  {notificationVisible
+                    ? 'Visible en barra de estado'
+                    : 'Oculta · Los pasos siguen contando'}
                 </Text>
               </View>
               <Switch
-                value={serviceEnabled}
+                value={notificationVisible}
                 onValueChange={handleToggle}
                 trackColor={{ false: colors.border, true: colors.primary + '66' }}
-                thumbColor={serviceEnabled ? colors.primary : colors.textTertiary}
+                thumbColor={notificationVisible ? colors.primary : colors.textTertiary}
               />
             </View>
             <Text style={styles.hint}>
-              El servicio de pasos corre en segundo plano y muestra una notificación persistente en la barra de estado y pantalla de bloqueo. Desactivarlo elimina la notificación pero deja de contar pasos cuando la app está cerrada.
+              {notificationVisible
+                ? 'La notificación aparece en la barra de estado y pantalla de bloqueo. Podés ocultarla si preferís que no se vea, sin afectar el conteo de pasos.'
+                : 'La notificación está oculta. El contador de pasos sigue funcionando en segundo plano normalmente.'}
             </Text>
           </View>
         )}
@@ -111,17 +115,17 @@ function makeStyles(colors) {
       backgroundColor: colors.background,
     },
     header: {
-      flexDirection:  'row',
-      alignItems:     'center',
-      justifyContent: 'space-between',
+      flexDirection:     'row',
+      alignItems:        'center',
+      justifyContent:    'space-between',
       paddingHorizontal: spacing.lg,
       paddingVertical:   spacing.md,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
     },
     backBtn: {
-      width: 40,
-      height: 40,
+      width:          40,
+      height:         40,
       alignItems:     'center',
       justifyContent: 'center',
     },
@@ -143,20 +147,20 @@ function makeStyles(colors) {
       marginBottom:  spacing.sm,
     },
     row: {
-      flexDirection:    'row',
-      alignItems:       'center',
-      backgroundColor:  colors.surface,
-      borderRadius:     radius.lg,
-      padding:          spacing.md,
-      gap:              spacing.md,
+      flexDirection:   'row',
+      alignItems:      'center',
+      backgroundColor: colors.surface,
+      borderRadius:    radius.lg,
+      padding:         spacing.md,
+      gap:             spacing.md,
     },
     rowIcon: {
       width:           36,
       height:          36,
       borderRadius:    18,
       backgroundColor: colors.primary + '22',
-      alignItems:     'center',
-      justifyContent: 'center',
+      alignItems:      'center',
+      justifyContent:  'center',
     },
     rowBody: {
       flex: 1,

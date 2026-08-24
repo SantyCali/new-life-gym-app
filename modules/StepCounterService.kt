@@ -20,13 +20,16 @@ import java.util.Calendar
 class StepCounterService : Service(), SensorEventListener {
 
     companion object {
-        const val CHANNEL_ID       = "nlg_pasos"
-        const val NOTIFICATION_ID  = 7001
-        const val PREFS_NAME       = "NLGStepCounter"
-        const val KEY_TODAY_STEPS  = "todaySteps"
-        const val KEY_LAST_ACC     = "lastAccumulated"
-        const val KEY_LAST_DATE    = "lastDate"
-        // Tiempo sin evento de sensor antes de re-registrar el listener (90s)
+        const val CHANNEL_ID        = "nlg_pasos"
+        const val CHANNEL_SILENT_ID = "nlg_pasos_silencioso"
+        const val NOTIFICATION_ID   = 7001
+        const val PREFS_NAME        = "NLGStepCounter"
+        const val KEY_TODAY_STEPS   = "todaySteps"
+        const val KEY_LAST_ACC      = "lastAccumulated"
+        const val KEY_LAST_DATE     = "lastDate"
+        const val KEY_SILENT        = "silentNotification"
+        const val ACTION_UPDATE_NOTIF = "NLG_UPDATE_NOTIFICATION"
+
         private const val SENSOR_WATCHDOG_TIMEOUT_MS = 90_000L
         private const val SENSOR_WATCHDOG_CHECK_MS   = 60_000L
     }
@@ -38,13 +41,11 @@ class StepCounterService : Service(), SensorEventListener {
     private val handler = Handler(Looper.getMainLooper())
     private var lastSensorEventMs = 0L
 
-    private var todaySteps: Int    = 0
+    private var todaySteps: Int       = 0
     private var lastAccumulated: Long = 0L
-    private var lastDate: String   = ""
+    private var lastDate: String      = ""
 
     // Watchdog: si el sensor deja de enviar datos, lo re-registramos.
-    // En MIUI el sensor puede "congelarse" cuando el sistema agresivo de batería
-    // suspende el proceso. Re-registrar el listener lo despierta.
     private val sensorWatchdog = object : Runnable {
         override fun run() {
             val elapsed = System.currentTimeMillis() - lastSensorEventMs
@@ -65,30 +66,36 @@ class StepCounterService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        createNotificationChannel()
+        createNotificationChannels()
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
 
-        // WakeLock PARTIAL: mantiene la CPU activa para que el sensor no se congele
-        // en MIUI/Xiaomi aunque la pantalla esté apagada.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "NLG::StepCounterWakeLock"
-        )
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NLG::StepCounterWakeLock")
         wakeLock?.acquire()
     }
 
     @Suppress("DEPRECATION")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Actualización de canal sin reiniciar el contador
+        if (intent?.action == ACTION_UPDATE_NOTIF) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                stopForeground(true)
+            }
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIFICATION_ID, buildNotification(todaySteps), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification(todaySteps))
+            }
+            return START_STICKY
+        }
+
         loadSavedData()
 
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification(todaySteps),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
-            )
+            startForeground(NOTIFICATION_ID, buildNotification(todaySteps), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification(todaySteps))
         }
@@ -97,7 +104,6 @@ class StepCounterService : Service(), SensorEventListener {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
 
-        // Iniciar watchdog
         handler.removeCallbacks(sensorWatchdog)
         handler.postDelayed(sensorWatchdog, SENSOR_WATCHDOG_CHECK_MS)
 
@@ -177,9 +183,12 @@ class StepCounterService : Service(), SensorEventListener {
             .apply()
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val nm = getSystemService(NotificationManager::class.java) ?: return
+
+            // Canal normal: ícono en barra de estado, visible
+            val normal = NotificationChannel(
                 CHANNEL_ID,
                 "Contador de pasos",
                 NotificationManager.IMPORTANCE_LOW
@@ -188,28 +197,43 @@ class StepCounterService : Service(), SensorEventListener {
                 setShowBadge(false)
                 enableVibration(false)
                 setSound(null, null)
-                // No mostrar en pantalla de bloqueo como notificación expandida
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
-            getSystemService(NotificationManager::class.java)
-                ?.createNotificationChannel(channel)
+
+            // Canal silencioso: sin ícono en barra, prácticamente invisible
+            val silent = NotificationChannel(
+                CHANNEL_SILENT_ID,
+                "Contador de pasos (silencioso)",
+                NotificationManager.IMPORTANCE_MIN
+            ).apply {
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+            }
+
+            nm.createNotificationChannel(normal)
+            nm.createNotificationChannel(silent)
         }
     }
 
     private fun buildNotification(steps: Int): Notification {
+        val isSilent = prefs.getBoolean(KEY_SILENT, false)
+        val channelId = if (isSilent) CHANNEL_SILENT_ID else CHANNEL_ID
+
         val tapIntent = packageManager.getLaunchIntentForPackage(packageName)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, channelId)
             .setContentTitle("New Life · Pasos hoy")
             .setContentText(formatSteps(steps))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(if (isSilent) NotificationCompat.PRIORITY_MIN else NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .build()
