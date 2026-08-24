@@ -15,14 +15,21 @@ import {
   startNativeStepService,
   getNativeSteps,
 } from '../services/nativeStepService';
+import {
+  syncStepsWithFirebase,
+  saveStepsToFirebase,
+} from '../services/stepsFirebaseService';
 
-export default function useSteps() {
+export default function useSteps(uid) {
   const [steps, setSteps]         = useState(0);
   const [available, setAvailable] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [hcStatus, setHcStatus]   = useState(
     Platform.OS === 'android' ? HC_STATUS.UNKNOWN : HC_STATUS.NOT_ANDROID
   );
+
+  // Mantener uid actualizado
+  useEffect(() => { uidRef.current = uid ?? null; }, [uid]);
 
   const mountedRef        = useRef(true);
   const dataRef           = useRef({ date: todayDateString(), todaySteps: 0, lastAccumulated: 0 });
@@ -31,6 +38,8 @@ export default function useSteps() {
   const midnightTimerRef  = useRef(null);
   const lastCallbackMsRef = useRef(0);
   const pollIntervalRef   = useRef(null);
+  const fbSaveTimerRef    = useRef(null);
+  const uidRef            = useRef(null);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -118,35 +127,51 @@ export default function useSteps() {
       if (nativeServiceAvailable) {
         setAvailable(true);
 
-        // Arrancar el servicio (si ya está corriendo, el intent es ignorado)
         await startNativeStepService();
 
-        // Leer pasos iniciales
-        const initial = await getNativeSteps();
-        if (mountedRef.current) setSteps(initial);
+        // Leer pasos locales y sincronizar con Firebase al arrancar
+        const raw = await getNativeSteps();
+        const today = todayDateString();
+        const synced = await syncStepsWithFirebase(uidRef.current, today, raw);
+        if (mountedRef.current) setSteps(synced);
         setLoading(false);
 
-        // Poll cada 2 s cuando la app está en primer plano
+        // Guardar en Firebase cada 30s (throttle para no abusar de escrituras)
+        const scheduleFbSave = (s) => {
+          clearTimeout(fbSaveTimerRef.current);
+          fbSaveTimerRef.current = setTimeout(() => {
+            saveStepsToFirebase(uidRef.current, todayDateString(), s).catch(() => {});
+          }, 30_000);
+        };
+
+        // Poll cada 1 s para animación fluida
         const startPoll = () => {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = setInterval(async () => {
             if (!mountedRef.current) return;
             const s = await getNativeSteps();
-            if (mountedRef.current) setSteps(s);
-          }, 2000);
+            if (mountedRef.current) {
+              setSteps(s);
+              scheduleFbSave(s);
+            }
+          }, 1000);
         };
         startPoll();
 
         appStateSub = AppState.addEventListener('change', async (state) => {
           if (!mountedRef.current) return;
           if (state === 'active') {
-            // Leer inmediatamente al volver al frente
             const s = await getNativeSteps();
-            if (mountedRef.current) setSteps(s);
+            // Sincronizar con Firebase al volver al frente (multi-dispositivo)
+            const merged = await syncStepsWithFirebase(uidRef.current, todayDateString(), s);
+            if (mountedRef.current) setSteps(merged);
             startPoll();
           } else if (state === 'background' || state === 'inactive') {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
+            // Guardar inmediatamente al ir al fondo
+            const s = await getNativeSteps();
+            saveStepsToFirebase(uidRef.current, todayDateString(), s).catch(() => {});
           }
         });
         return;
@@ -203,6 +228,7 @@ export default function useSteps() {
     return () => {
       mountedRef.current = false;
       clearInterval(pollIntervalRef.current);
+      clearTimeout(fbSaveTimerRef.current);
       subRef.current?.remove();
       appStateSub?.remove();
       clearTimeout(midnightTimerRef.current);

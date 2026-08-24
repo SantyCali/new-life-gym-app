@@ -10,7 +10,10 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import java.util.Calendar
 
@@ -23,15 +26,39 @@ class StepCounterService : Service(), SensorEventListener {
         const val KEY_TODAY_STEPS  = "todaySteps"
         const val KEY_LAST_ACC     = "lastAccumulated"
         const val KEY_LAST_DATE    = "lastDate"
+        // Tiempo sin evento de sensor antes de re-registrar el listener (90s)
+        private const val SENSOR_WATCHDOG_TIMEOUT_MS = 90_000L
+        private const val SENSOR_WATCHDOG_CHECK_MS   = 60_000L
     }
 
     private lateinit var sensorManager: SensorManager
     private var stepSensor: Sensor? = null
     private lateinit var prefs: SharedPreferences
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastSensorEventMs = 0L
 
-    private var todaySteps: Int   = 0
+    private var todaySteps: Int    = 0
     private var lastAccumulated: Long = 0L
-    private var lastDate: String  = ""
+    private var lastDate: String   = ""
+
+    // Watchdog: si el sensor deja de enviar datos, lo re-registramos.
+    // En MIUI el sensor puede "congelarse" cuando el sistema agresivo de batería
+    // suspende el proceso. Re-registrar el listener lo despierta.
+    private val sensorWatchdog = object : Runnable {
+        override fun run() {
+            val elapsed = System.currentTimeMillis() - lastSensorEventMs
+            if (lastSensorEventMs > 0L && elapsed > SENSOR_WATCHDOG_TIMEOUT_MS) {
+                stepSensor?.let {
+                    sensorManager.unregisterListener(this@StepCounterService)
+                    sensorManager.registerListener(
+                        this@StepCounterService, it, SensorManager.SENSOR_DELAY_NORMAL
+                    )
+                }
+            }
+            handler.postDelayed(this, SENSOR_WATCHDOG_CHECK_MS)
+        }
+    }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -41,6 +68,15 @@ class StepCounterService : Service(), SensorEventListener {
         createNotificationChannel()
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+
+        // WakeLock PARTIAL: mantiene la CPU activa para que el sensor no se congele
+        // en MIUI/Xiaomi aunque la pantalla esté apagada.
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "NLG::StepCounterWakeLock"
+        )
+        wakeLock?.acquire()
     }
 
     @Suppress("DEPRECATION")
@@ -61,11 +97,17 @@ class StepCounterService : Service(), SensorEventListener {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
 
+        // Iniciar watchdog
+        handler.removeCallbacks(sensorWatchdog)
+        handler.postDelayed(sensorWatchdog, SENSOR_WATCHDOG_CHECK_MS)
+
         return START_STICKY
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         sensorManager.unregisterListener(this)
+        wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
 
@@ -75,26 +117,23 @@ class StepCounterService : Service(), SensorEventListener {
 
     override fun onSensorChanged(event: SensorEvent?) {
         val accumulated = event?.values?.get(0)?.toLong() ?: return
+        lastSensorEventMs = System.currentTimeMillis()
         val today = todayString()
 
         when {
             today != lastDate -> {
-                // Midnight rolled over — start fresh for new day
                 todaySteps      = 0
                 lastDate        = today
                 lastAccumulated = accumulated
             }
             lastAccumulated == 0L -> {
-                // First ever reading — use as baseline, don't add steps
                 lastAccumulated = accumulated
             }
             accumulated < lastAccumulated -> {
-                // Device rebooted, counter reset from somewhere above us
                 todaySteps      += accumulated.toInt()
                 lastAccumulated  = accumulated
             }
             else -> {
-                // Normal delta
                 todaySteps      += (accumulated - lastAccumulated).toInt()
                 lastAccumulated  = accumulated
             }
@@ -124,7 +163,6 @@ class StepCounterService : Service(), SensorEventListener {
             lastAccumulated = prefs.getLong(KEY_LAST_ACC, 0L)
             lastDate        = today
         } else {
-            // New day — reset (keep lastAccumulated unknown; first callback sets baseline)
             todaySteps      = 0
             lastAccumulated = 0L
             lastDate        = today
@@ -150,6 +188,8 @@ class StepCounterService : Service(), SensorEventListener {
                 setShowBadge(false)
                 enableVibration(false)
                 setSound(null, null)
+                // No mostrar en pantalla de bloqueo como notificación expandida
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
             getSystemService(NotificationManager::class.java)
                 ?.createNotificationChannel(channel)
@@ -163,15 +203,26 @@ class StepCounterService : Service(), SensorEventListener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("New Life")
-            .setContentText("$steps pasos hoy")
+            .setContentTitle("New Life · Pasos hoy")
+            .setContentText(formatSteps(steps))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .build()
+    }
+
+    private fun formatSteps(steps: Int): String {
+        return if (steps >= 1000) {
+            val miles = steps / 1000
+            val resto = steps % 1000
+            "${miles}.${resto.toString().padStart(3, '0')} pasos"
+        } else {
+            "$steps pasos"
+        }
     }
 
     private fun updateNotification(steps: Int) {

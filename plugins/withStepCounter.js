@@ -56,6 +56,7 @@ function withManifest(config) {
     addPerm('android.permission.FOREGROUND_SERVICE');
     addPerm('android.permission.FOREGROUND_SERVICE_HEALTH');
     addPerm('android.permission.RECEIVE_BOOT_COMPLETED');
+    addPerm('android.permission.WAKE_LOCK');
 
     const app = manifest.application[0];
 

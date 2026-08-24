@@ -35,8 +35,8 @@ function computeAge(fechaNacimiento) {
 }
 
 export function StepProvider({ children }) {
-  const { steps, available, loading, hcStatus, connectHC } = useSteps();
   const { user }    = useAuth();
+  const { steps, available, loading, hcStatus, connectHC } = useSteps(user?.uid);
   const { profile } = useUserProfile();
 
   const weightKg = profile?.peso    ? Number(profile.peso)   : 70;

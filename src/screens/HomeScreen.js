@@ -80,13 +80,20 @@ export default function HomeScreen({ navigation }) {
       setAnimSteps(to);
       return;
     }
-    const diff      = to - from;
-    const duration  = Math.min(700, Math.max(200, diff * 12));
+    const diff = to - from;
+    // Pasos normales (caminando): duración igual al intervalo de polling → movimiento
+    // continuo y sin "saltos". Para carga inicial de muchos pasos: más rápido.
+    const duration = diff <= 8
+      ? 950   // justo debajo del intervalo de 1s → se siente como tiempo real
+      : Math.min(1400, Math.max(500, diff * 6));
+    // Easing: lineal para incrementos pequeños (fluido continuo),
+    // ease-out cuadrática para saltos grandes (se frena al final).
+    const useLinear = diff <= 8;
     const startTime = Date.now();
     const tick = () => {
       const elapsed  = Date.now() - startTime;
       const progress = Math.min(1, elapsed / duration);
-      const eased    = 1 - (1 - progress) ** 2;
+      const eased    = useLinear ? progress : 1 - (1 - progress) ** 2;
       const val      = Math.round(from + diff * eased);
       animRef.current.value = val;
       setAnimSteps(val);
