@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
+import android.graphics.Color
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -14,6 +16,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import java.util.Calendar
 
@@ -28,8 +31,10 @@ class StepCounterService : Service(), SensorEventListener {
         const val KEY_LAST_ACC      = "lastAccumulated"
         const val KEY_LAST_DATE     = "lastDate"
         const val KEY_SILENT        = "silentNotification"
+        const val KEY_GOAL          = "dailyGoal"
         const val ACTION_UPDATE_NOTIF = "NLG_UPDATE_NOTIFICATION"
 
+        private const val DEFAULT_GOAL              = 10_000
         private const val SENSOR_WATCHDOG_TIMEOUT_MS = 90_000L
         private const val SENSOR_WATCHDOG_CHECK_MS   = 60_000L
     }
@@ -45,7 +50,6 @@ class StepCounterService : Service(), SensorEventListener {
     private var lastAccumulated: Long = 0L
     private var lastDate: String      = ""
 
-    // Watchdog: si el sensor deja de enviar datos, lo re-registramos.
     private val sensorWatchdog = object : Runnable {
         override fun run() {
             val elapsed = System.currentTimeMillis() - lastSensorEventMs
@@ -77,7 +81,6 @@ class StepCounterService : Service(), SensorEventListener {
 
     @Suppress("DEPRECATION")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Actualización de canal sin reiniciar el contador
         if (intent?.action == ACTION_UPDATE_NOTIF) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -187,20 +190,17 @@ class StepCounterService : Service(), SensorEventListener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java) ?: return
 
-            // Canal normal: ícono en barra de estado, visible
             val normal = NotificationChannel(
                 CHANNEL_ID,
                 "Contador de pasos",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Muestra tus pasos diarios en tiempo real"
                 setShowBadge(false)
                 enableVibration(false)
                 setSound(null, null)
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
 
-            // Canal silencioso: sin ícono en barra, prácticamente invisible
             val silent = NotificationChannel(
                 CHANNEL_SILENT_ID,
                 "Contador de pasos (silencioso)",
@@ -217,25 +217,47 @@ class StepCounterService : Service(), SensorEventListener {
         }
     }
 
+    private fun isDarkMode(): Boolean {
+        val flags = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return flags == Configuration.UI_MODE_NIGHT_YES
+    }
+
     private fun buildNotification(steps: Int): Notification {
         val isSilent = prefs.getBoolean(KEY_SILENT, false)
         val channelId = if (isSilent) CHANNEL_SILENT_ID else CHANNEL_ID
+        val goal = prefs.getInt(KEY_GOAL, DEFAULT_GOAL)
 
         val tapIntent = packageManager.getLaunchIntentForPackage(packageName)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+        // Layout personalizado: ícono arriba, anillo + pasos abajo
+        val views = RemoteViews(packageName, R.layout.notification_steps)
+
+        // Progreso del anillo (0–10000)
+        val progress = (steps.toFloat() / goal * 10_000).toInt().coerceIn(0, 10_000)
+        views.setProgressBar(R.id.notif_ring, 10_000, progress, false)
+
+        // Texto del contador
+        views.setTextViewText(R.id.notif_steps_text, formatSteps(steps))
+
+        // Color del texto según tema del sistema
+        val textColor = if (isDarkMode()) Color.WHITE else Color.BLACK
+        views.setTextColor(R.id.notif_steps_text, textColor)
+
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("New Life · Pasos hoy")
+            .setSmallIcon(android.R.drawable.ic_menu_directions)
+            .setContentTitle("New Life")
             .setContentText(formatSteps(steps))
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(if (isSilent) NotificationCompat.PRIORITY_MIN else NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setCustomContentView(views)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .build()
     }
 
