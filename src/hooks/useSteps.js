@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Platform, AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   requestPedometerPermission,
   isPedometerAvailable,
@@ -126,6 +127,12 @@ export default function useSteps(uid) {
       // bloqueada. El JS solo lee los pasos del servicio vía polling.
       if (nativeServiceAvailable) {
         setAvailable(true);
+
+        const disabled = await AsyncStorage.getItem('STEP_SERVICE_DISABLED').catch(() => null);
+        if (disabled === 'true') {
+          setLoading(false);
+          return;
+        }
 
         await startNativeStepService();
 

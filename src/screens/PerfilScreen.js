@@ -216,6 +216,7 @@ export default function PerfilScreen({ navigation }) {
         onMedidas={() => navigation.navigate('BodyMeasurements')}
         onAspecto={() => navigation.navigate('Aspecto')}
         onGym={() => navigation.navigate('Gym')}
+        onSettings={() => navigation.navigate('Settings')}
         photoUri={photoUri}
         nombre={nombre}
         apellido={apellido}
@@ -1048,7 +1049,7 @@ function UserStat({ label, value }) {
   );
 }
 
-function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspecto, onGym, photoUri, nombre, apellido, initials }) {
+function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspecto, onGym, onSettings, photoUri, nombre, apellido, initials }) {
   const { theme: { colors } } = useTheme();
   const drawerStyles = useMemo(() => makeDrawerStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -1159,6 +1160,22 @@ function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspect
           <View style={drawerStyles.neonCardBody}>
             <Text style={drawerStyles.neonCardTitle}>En el Gym</Text>
             <Text style={drawerStyles.neonCardSub}>¿Cuánta gente hay ahora?</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+        </TouchableOpacity>
+
+        {/* Configuración — neon card */}
+        <TouchableOpacity
+          style={drawerStyles.neonCard}
+          onPress={() => onClose(onSettings)}
+          activeOpacity={0.75}
+        >
+          <View style={drawerStyles.neonCardIcon}>
+            <Ionicons name="settings-outline" size={18} color={colors.primary} />
+          </View>
+          <View style={drawerStyles.neonCardBody}>
+            <Text style={drawerStyles.neonCardTitle}>Configuración</Text>
+            <Text style={drawerStyles.neonCardSub}>Notificaciones · Servicio de pasos</Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.primary} />
         </TouchableOpacity>

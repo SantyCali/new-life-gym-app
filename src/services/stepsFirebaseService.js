@@ -1,45 +1,36 @@
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
-// Guarda los pasos del día en Firestore: users/{uid}/pasos/{YYYY-MM-DD}
-// Si el otro dispositivo ya tiene más pasos para ese día, ganamos el máximo.
+// Colección unificada: users/{uid}/stepsHistory/{YYYY-MM-DD} → { date, steps }
+// Misma colección que usa StepContext y fetchWeeklyStepHistory.
+
 export async function saveStepsToFirebase(uid, date, steps) {
   if (!uid || !date || steps == null) return;
   try {
-    const ref = doc(db, 'users', uid, 'pasos', date);
+    const ref = doc(db, 'users', uid, 'stepsHistory', date);
     const existing = await getDoc(ref);
-    const prevSteps = existing.exists() ? (existing.data().pasos ?? 0) : 0;
-    // Solo escribir si tenemos más pasos que lo guardado (evita sobreescribir
-    // datos de otro dispositivo que tiene más pasos del mismo día)
+    const prevSteps = existing.exists() ? (existing.data().steps ?? 0) : 0;
     if (steps >= prevSteps) {
-      await setDoc(ref, {
-        pasos: steps,
-        actualizadoEn: serverTimestamp(),
-      });
+      await setDoc(ref, { date, steps });
     }
   } catch {}
 }
 
-// Carga los pasos de un día desde Firestore.
-// Retorna el número de pasos o null si no hay datos.
 export async function loadStepsFromFirebase(uid, date) {
   if (!uid || !date) return null;
   try {
-    const ref  = doc(db, 'users', uid, 'pasos', date);
+    const ref  = doc(db, 'users', uid, 'stepsHistory', date);
     const snap = await getDoc(ref);
-    if (snap.exists()) return snap.data().pasos ?? null;
+    if (snap.exists()) return snap.data().steps ?? null;
     return null;
   } catch {
     return null;
   }
 }
 
-// Retorna el mayor valor entre los pasos locales y los de Firebase.
-// Úsalo al iniciar la app para sincronizar entre dispositivos.
 export async function syncStepsWithFirebase(uid, date, localSteps) {
   const cloudSteps = await loadStepsFromFirebase(uid, date);
   if (cloudSteps == null) {
-    // Nada en la nube: subir los locales si son > 0
     if (localSteps > 0) saveStepsToFirebase(uid, date, localSteps).catch(() => {});
     return localSteps;
   }

@@ -1,19 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { View, Image, StyleSheet, Animated } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import { useTheme } from '../../context/ThemeContext';
 
 export default function SplashLoader() {
   const { theme: { colors, isDark } } = useTheme();
-  const pulse  = useRef(new Animated.Value(0.85)).current;
-  const fade   = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0.85)).current;
 
   useEffect(() => {
-    // Fade in rápido
-    Animated.timing(fade, {
-      toValue:         1,
-      duration:        300,
-      useNativeDriver: true,
-    }).start();
+    // Ocultar el splash nativo; SplashLoader ya está visible
+    SplashScreen.hideAsync().catch(() => {});
 
     // Pulso suave infinito
     Animated.loop(
@@ -30,7 +26,7 @@ export default function SplashLoader() {
         }),
       ])
     ).start();
-  }, [fade, pulse]);
+  }, [pulse]);
 
   const icon = isDark
     ? require('../../../assets/icon-dark.png')
@@ -38,7 +34,7 @@ export default function SplashLoader() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Animated.View style={{ opacity: fade, transform: [{ scale: pulse }] }}>
+      <Animated.View style={{ transform: [{ scale: pulse }] }}>
         <Image source={icon} style={styles.logo} resizeMode="contain" />
       </Animated.View>
     </View>
@@ -47,9 +43,9 @@ export default function SplashLoader() {
 
 const styles = StyleSheet.create({
   container: {
-    flex:            1,
-    alignItems:      'center',
-    justifyContent:  'center',
+    flex:           1,
+    alignItems:     'center',
+    justifyContent: 'center',
   },
   logo: {
     width:  140,

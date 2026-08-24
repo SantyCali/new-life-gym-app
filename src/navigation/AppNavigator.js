@@ -14,6 +14,7 @@ import GymScreen from '../screens/GymScreen';
 import RachaScreen from '../screens/RachaScreen';
 import TorneosScreen from '../screens/TorneosScreen';
 import TorneoDetailScreen from '../screens/TorneoDetailScreen';
+import SettingsScreen from '../screens/SettingsScreen';
 import useAuth from '../hooks/useAuth';
 import { useTheme } from '../context/ThemeContext';
 import SplashLoader from '../components/ui/SplashLoader';
@@ -96,6 +97,7 @@ export default function AppNavigator() {
             />
             <Stack.Screen name="Torneos" component={TorneosScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background } }} />
             <Stack.Screen name="TorneoDetail" component={TorneoDetailScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background } }} />
+            <Stack.Screen name="Settings" component={SettingsScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background } }} />
           </>
         ) : (
           <>
