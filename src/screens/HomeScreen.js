@@ -581,15 +581,15 @@ export default function HomeScreen({ navigation }) {
 }
 
 function gymStatusColor(count) {
-  if (count === 0) return '#9CA3AF';
-  if (count <= 5)  return '#22C55E';
-  if (count <= 15) return '#F59E0B';
+  if (count === 0)  return '#6B7280';
+  if (count <= 14)  return '#22C55E';
+  if (count <= 21)  return '#EAB308';
   return '#EF4444';
 }
 
 function gymStatusLabel(count) {
   if (count === 0) return 'Sin gente por ahora';
-  if (count === 1) return '1 persona';
+  if (count === 1) return '1 persona · Tranquilo';
   if (count <= 14) return `${count} personas · Tranquilo`;
   if (count <= 21) return `${count} personas · Moderado`;
   return `${count} personas · Lleno`;

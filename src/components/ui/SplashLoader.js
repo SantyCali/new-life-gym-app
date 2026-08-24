@@ -1,17 +1,18 @@
 import { useEffect, useRef } from 'react';
-import { View, Image, StyleSheet, Animated } from 'react-native';
+import { View, Image, StyleSheet, Animated, useColorScheme } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
-import { useTheme } from '../../context/ThemeContext';
 
 export default function SplashLoader() {
-  const { theme: { colors, isDark } } = useTheme();
+  // Usar el esquema del SISTEMA directamente, sin depender del estado de carga
+  // de ThemeContext. Así el ícono siempre coincide con el splash nativo.
+  const systemIsDark = useColorScheme() === 'dark';
+  const bgColor = systemIsDark ? '#0A0A0A' : '#FFFFFF';
+
   const pulse = useRef(new Animated.Value(0.85)).current;
 
   useEffect(() => {
-    // Ocultar el splash nativo; SplashLoader ya está visible
     SplashScreen.hideAsync().catch(() => {});
 
-    // Pulso suave infinito
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -28,12 +29,12 @@ export default function SplashLoader() {
     ).start();
   }, [pulse]);
 
-  const icon = isDark
+  const icon = systemIsDark
     ? require('../../../assets/icon-dark.png')
     : require('../../../assets/icon-light.png');
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: bgColor }]}>
       <Animated.View style={{ transform: [{ scale: pulse }] }}>
         <Image source={icon} style={styles.logo} resizeMode="contain" />
       </Animated.View>
