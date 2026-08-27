@@ -1,4 +1,5 @@
-import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, getDoc, updateDoc, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import { todayDateString, localDateString } from './stepService';
 
@@ -36,23 +37,85 @@ export async function awardXPAndCoins(uid, xpGain) {
   finally { _awarding = false; }
 }
 
+// Otorga los XP de "asistencia al gym" una sola vez por día (por fecha, no por
+// sesión) — mismo campo lastGymRewardDate de siempre. Usa una transacción para
+// que el chequeo "¿ya se premió hoy?" y la escritura sean atómicos: si esta
+// función se llega a llamar dos veces casi al mismo tiempo (p.ej. una segunda
+// detección de "entrada" tras cerrar/reabrir la app dentro de la ventana de
+// presencia), Firestore reintenta la segunda transacción con el dato ya
+// actualizado y esta corta por el mismo chequeo — no puede duplicarse.
+//
+// A propósito NO atrapa errores acá: si falla por falta de conexión, el error
+// se propaga para que el llamador pueda distinguir "ya premiado hoy" (false)
+// de "no se pudo confirmar" (excepción) y decidir si guardar un pendiente
+// offline — ver markGymRewardPending/flushPendingGymReward más abajo.
 export async function checkAndAwardGymReward(uid) {
   if (!uid) return false;
   const today = todayDateString();
-  try {
-    const ref  = doc(db, 'users', uid);
-    const snap = await getDoc(ref);
+  const ref = doc(db, 'users', uid);
+  return await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
     if (!snap.exists()) return false;
     const { lastGymRewardDate, xp = 0, nivelJuego = 1 } = snap.data();
     if (lastGymRewardDate === today) return false;
     const updated = applyXPGain(xp, nivelJuego, XP_GYM_VISIT);
-    await updateDoc(ref, {
+    tx.update(ref, {
       ...updated,
       lastGymRewardDate: today,
       gymVisitCount:     increment(1),
     });
     return true;
-  } catch { return false; }
+  });
+}
+
+// ── Recompensa de gym pendiente de sincronizar (offline) ───────────────────────
+// No es un sistema de recompensas alternativo: es solo una marca local ("hubo
+// una entrada hoy que no se pudo confirmar contra Firestore") que sobrevive al
+// cierre/reapertura de la app vía AsyncStorage. checkAndAwardGymReward (arriba,
+// con su transacción) sigue siendo la única autoridad que efectivamente otorga
+// XP — esto solo recuerda "reintentar esa misma llamada más tarde".
+const gymRewardPendingKey = (uid) => `gymRewardPending_${uid}`;
+
+// Idempotente: si el usuario entra varias veces offline el mismo día, cada
+// intento fallido vuelve a escribir la MISMA fecha — nunca se acumulan marcas.
+export async function markGymRewardPending(uid) {
+  if (!uid) return;
+  try { await AsyncStorage.setItem(gymRewardPendingKey(uid), todayDateString()); } catch {}
+}
+
+export async function clearGymRewardPending(uid) {
+  if (!uid) return;
+  try { await AsyncStorage.removeItem(gymRewardPendingKey(uid)); } catch {}
+}
+
+// Reintenta la recompensa pendiente contra Firestore. Se llama en puntos ya
+// existentes del ciclo de vida (montaje del provider, AppState → 'active') —
+// no agrega ningún listener nuevo.
+export async function flushPendingGymReward(uid) {
+  if (!uid) return;
+  let pendingDate;
+  try { pendingDate = await AsyncStorage.getItem(gymRewardPendingKey(uid)); } catch { return; }
+  if (!pendingDate) return;
+
+  if (pendingDate !== todayDateString()) {
+    // Quedó pendiente de un día anterior sin haber recuperado conexión a
+    // tiempo. checkAndAwardGymReward siempre opera sobre "hoy", así que
+    // reintentarlo ahora ya no correspondería al día real de esa visita —
+    // se descarta en vez de adjudicar XP al día equivocado.
+    await clearGymRewardPending(uid);
+    return;
+  }
+
+  try {
+    // Resuelve (true u false) ⇒ Firestore ya tiene una respuesta autoritativa
+    // para hoy (se otorgó ahora, o ya estaba otorgado) — el pendiente deja de
+    // ser necesario en cualquiera de los dos casos.
+    await checkAndAwardGymReward(uid);
+    await clearGymRewardPending(uid);
+  } catch {
+    // Sigue sin poder confirmarse (todavía sin conexión) — se deja la marca
+    // para el próximo intento.
+  }
 }
 
 export async function updateStreak(uid, currentRacha, lastActiveDate) {

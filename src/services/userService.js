@@ -77,3 +77,19 @@ export async function fetchWeeklyStepHistory(uid) {
   snap.docs.forEach(d => { map[d.id] = d.data().steps ?? 0; });
   return map;
 }
+
+// Returns { 'YYYY-MM-DD': gymMinutes } for the last 7 days — mismo patrón que
+// fetchWeeklyStepHistory, sobre la subcolección gymHistory.
+export async function fetchWeeklyGymHistory(uid) {
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const y = sevenDaysAgo.getFullYear();
+  const mo = String(sevenDaysAgo.getMonth() + 1).padStart(2, '0');
+  const dy = String(sevenDaysAgo.getDate()).padStart(2, '0');
+  const fromDate = `${y}-${mo}-${dy}`;
+  const colRef = collection(db, USERS_COLLECTION, uid, 'gymHistory');
+  const snap = await getDocs(query(colRef, where('date', '>=', fromDate)));
+  const map = {};
+  snap.docs.forEach(d => { map[d.id] = d.data().minutes ?? 0; });
+  return map;
+}

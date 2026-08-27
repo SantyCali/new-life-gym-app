@@ -19,6 +19,7 @@ import useAuth from '../hooks/useAuth';
 import { useStepContext } from '../context/StepContext';
 import { spacing, radius } from '../theme';
 import { fetchWeeklyStepHistory } from '../services/userService';
+import { calcCalories, computeAge } from '../services/stepService';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -186,10 +187,12 @@ export default function RachaScreen({ navigation }) {
   const daysLeft      = nextMilestone - streakDays;
   const ringProgress  = Math.min(streakDays / nextMilestone, 1);
   const maxSteps      = Math.max(...realWeeklyStats.map(d => d.steps), goal, 1);
-  const weightKg      = profile?.peso ? Number(profile.peso) : 70;
+  const weightKg      = profile?.peso   ? Number(profile.peso)   : 70;
+  const heightCm      = profile?.altura ? Number(profile.altura) : 170;
+  const ageYears      = computeAge(profile?.fechaNacimiento);
 
   const weeklyTotalSteps = realWeeklyStats.reduce((s, d) => s + d.steps, 0);
-  const weeklyWalkCal    = Math.round(weeklyTotalSteps * 0.04 * (weightKg / 70));
+  const weeklyWalkCal    = calcCalories(weeklyTotalSteps, weightKg, heightCm, ageYears, profile?.sexo).active;
   const weeklyTotalMin   = Math.round(weeklyTotalSteps / 100);
   const weeklyH          = Math.floor(weeklyTotalMin / 60);
   const weeklyM          = weeklyTotalMin % 60;

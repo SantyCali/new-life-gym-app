@@ -6,9 +6,12 @@ import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import { subscribeToUserPresence, advanceRoutineDay, ACTIVE_MS } from '../services/gymService';
 import { subscribeToClientRoutine } from '../services/routineService';
-import { checkAndAwardGymReward, XP_GYM_VISIT } from '../services/gamificationService';
+import {
+  checkAndAwardGymReward, XP_GYM_VISIT,
+  markGymRewardPending, clearGymRewardPending, flushPendingGymReward,
+} from '../services/gamificationService';
 import { subscribeToAnnouncement } from '../services/announcementService';
-import { doc, updateDoc, arrayRemove } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase';
 import GymCelebrationModal from '../components/ui/GymCelebrationModal';
 import LevelUpModal from '../components/ui/LevelUpModal';
@@ -116,6 +119,26 @@ export function GymEventsProvider({ children }) {
     }
   }, [profile?.gymRoutineDayIndex]);
 
+  // ── Backfill: recupera la última sesión de gym que ya vivía en el perfil
+  // (gymTodayDate/gymTodayMinutes) antes de que existiera gymHistory, igual que
+  // el backfill análogo de pasos en StepContext.js. Solo aplica si esa fecha
+  // entra dentro de la ventana de 7 días que se puede navegar.
+  useEffect(() => {
+    if (!user?.uid || !profile?.gymTodayDate || !(profile?.gymTodayMinutes > 0)) return;
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const y = sevenDaysAgo.getFullYear();
+    const mo = String(sevenDaysAgo.getMonth() + 1).padStart(2, '0');
+    const dy = String(sevenDaysAgo.getDate()).padStart(2, '0');
+    const fromDate = `${y}-${mo}-${dy}`;
+    if (profile.gymTodayDate < fromDate) return;
+    setDoc(doc(db, 'users', user.uid, 'gymHistory', profile.gymTodayDate), {
+      date:    profile.gymTodayDate,
+      minutes: profile.gymTodayMinutes,
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, profile?.gymTodayDate]);
+
   // Mantener ref sincronizada para el AppState listener (evita stale closure)
   isAtGymRef.current = isAtGym;
 
@@ -131,9 +154,14 @@ export function GymEventsProvider({ children }) {
 
   // Cuando la app vuelve al frente, re-verificar si la sesión de gym ya expiró.
   // El setTimeout interno no dispara cuando la app está en background en Android.
+  // Reutilizamos este mismo listener (no se agrega uno nuevo) para además
+  // reintentar cualquier recompensa de gym que haya quedado pendiente por
+  // falta de conexión — "volver al frente" es un buen proxy de "puede que ya
+  // haya internet de nuevo" sin necesitar una librería de conectividad.
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
       if (state !== 'active') return;
+      if (user?.uid) flushPendingGymReward(user.uid);
       if (!isAtGymRef.current) return;
       const checkinMs = latestGymCheckinMsRef.current;
       if (checkinMs && Date.now() - checkinMs > ACTIVE_MS) {
@@ -141,7 +169,14 @@ export function GymEventsProvider({ children }) {
       }
     });
     return () => sub.remove();
-  }, []);
+  }, [user?.uid]);
+
+  // Reintento al abrir la app / iniciar sesión — cubre el caso de haber
+  // quedado offline con una recompensa pendiente y cerrado la app del todo
+  // (AsyncStorage persiste esa marca; acá se reintenta apenas hay uid).
+  useEffect(() => {
+    if (user?.uid) flushPendingGymReward(user.uid);
+  }, [user?.uid]);
 
   // Gym check-in / check-out
   useEffect(() => {
@@ -150,7 +185,14 @@ export function GymEventsProvider({ children }) {
 
     if (isAtGym && !was) {
       // ── ENTRADA ──
-      if (user?.uid) checkAndAwardGymReward(user.uid);
+      // Si checkAndAwardGymReward no puede confirmarse contra Firestore (sin
+      // conexión), se guarda localmente como pendiente para reintentar más
+      // tarde (ver AppState/mount arriba) — nunca se "inventa" el XP acá.
+      if (user?.uid) {
+        checkAndAwardGymReward(user.uid)
+          .then(() => clearGymRewardPending(user.uid))
+          .catch(() => markGymRewardPending(user.uid));
+      }
       setTimeout(() => setGymCeleb(true), 700);
 
       const count = routine?.dias?.length ?? 0;
@@ -173,6 +215,12 @@ export function GymEventsProvider({ children }) {
       if (user?.uid && gymEntryTimeRef.current) {
         const minutes = Math.max(1, Math.round((Date.now() - gymEntryTimeRef.current) / 60000));
         updateDoc(doc(db, 'users', user.uid), { gymTodayMinutes: minutes }).catch(() => {});
+        // Historial diario de gym (mismo patrón que stepsHistory): si el usuario
+        // entra y sale varias veces el mismo día, esto refleja la última sesión,
+        // igual que gymTodayMinutes — no se acumulan minutos entre sesiones.
+        const d = new Date();
+        const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        setDoc(doc(db, 'users', user.uid, 'gymHistory', today), { date: today, minutes }).catch(() => {});
         gymEntryTimeRef.current = null;
       }
     }

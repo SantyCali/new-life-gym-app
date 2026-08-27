@@ -27,23 +27,30 @@ import Animated, {
   withTiming,
   Easing,
   runOnJS,
+  interpolate,
+  Extrapolation,
 } from 'react-native-reanimated';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
 import ProgressRing from '../components/ui/ProgressRing';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
-import { updateUserProfile, addWeightEntry, deleteWeightEntry } from '../services/userService';
+import { updateUserProfile, addWeightEntry, deleteWeightEntry, fetchWeeklyStepHistory, fetchWeeklyGymHistory } from '../services/userService';
+import { calcCalories } from '../services/stepService';
 import { subscribeToBodyWeightHistory } from '../services/progressService';
 import { getSocioByDni } from '../services/gymService';
 import { awardXPAndCoins } from '../services/gamificationService'; // TEMP TEST
 import { useStepContext } from '../context/StepContext';
 import { useGymEvents } from '../context/GymEventsContext';
+
+const DAY_ABBR = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
 
 const { width } = Dimensions.get('window');
 const BAR_MAX_HEIGHT = 80;
@@ -66,20 +73,16 @@ const NIVEL_LABEL = {
   avanzado:     'Avanzado',
 };
 
-function calcCalorias(pesoKg, alturaCm, edadAnios, stepsHoy, gymMinutos) {
-  const kg    = pesoKg    > 0 ? pesoKg    : 70;
-  const cm    = alturaCm  > 0 ? alturaCm  : 170;
-  const edad  = edadAnios > 0 ? edadAnios : 30;
-  const steps = stepsHoy  > 0 ? stepsHoy  : 0;
-  const gym   = gymMinutos > 0 ? gymMinutos : 0;
-  // Factor de edad: metabolismo baja ~0.3% por año a partir de los 30
-  const ageFactor = Math.max(0.88, Math.min(1.10, 1 + (30 - Math.max(15, Math.min(70, edad))) * 0.003));
-  // Factor de altura: paso más largo en personas más altas → más kcal por paso
-  const heightFactor = Math.max(0.92, Math.min(1.08, 1 + (cm - 170) * 0.003));
-  // MET 3.5 = caminata cómoda (100 pasos/min ≈ 6000 pasos/hora)
-  const calPasos = Math.round(3.5 * kg * steps / 6000 * heightFactor * ageFactor);
-  // MET 5.0 = entrenamiento moderado con pesas
-  const calGym   = Math.round(5.0 * kg * gym  / 60   * ageFactor);
+function calcCalorias(pesoKg, alturaCm, edadAnios, stepsHoy, gymMinutos, sexo) {
+  const kg   = pesoKg    > 0 ? pesoKg    : 70;
+  const edad = edadAnios > 0 ? edadAnios : 30;
+  const gym  = gymMinutos > 0 ? gymMinutos : 0;
+  // Calorías por caminar: misma fórmula (MET) que usa el Home, vía stepService.
+  const { total: calPasos } = calcCalories(stepsHoy, kg, alturaCm, edad, sexo);
+  // Gym: factor de edad propio (metabolismo baja ~0.3%/año desde los 30) + MET 5.0
+  // (entrenamiento moderado con pesas) — sin cambios respecto a la lógica anterior.
+  const ageFactorGym = Math.max(0.88, Math.min(1.10, 1 + (30 - Math.max(15, Math.min(70, edad))) * 0.003));
+  const calGym = Math.round(5.0 * kg * gym / 60 * ageFactorGym);
   return { calPasos, calGym, total: calPasos + calGym };
 }
 
@@ -133,20 +136,114 @@ export default function PerfilScreen({ navigation }) {
 
   const edad  = calcEdad(profile?.fechaNacimiento);
 
-  const { caloriasData, gymMinHoy } = useMemo(() => {
+  // ── Navegación histórica (misma lógica y misma fuente de datos que Home) ──────
+  // dayOffset: 0=hoy, -1=ayer, …, -6 → los mismos 7 días que ya guarda la app
+  // (stepsHistory en Firestore, vía fetchWeeklyStepHistory — no se crea storage nuevo).
+  const [dayOffset, setDayOffset]   = useState(0);
+  const [historyMap, setHistoryMap] = useState({});
+  const [gymHistoryMap, setGymHistoryMap] = useState({});
+
+  useFocusEffect(useCallback(() => {
+    if (!authUser?.uid) return;
+    fetchWeeklyStepHistory(authUser.uid).then(setHistoryMap).catch(() => {});
+    fetchWeeklyGymHistory(authUser.uid).then(setGymHistoryMap).catch(() => {});
+  }, [authUser?.uid]));
+
+  const getOffsetDate = (offset) => {
     const d = new Date();
-    const hoy = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    // Gym: solo cuenta si fue hoy y YA salió (gymTodayMinutes registrados)
-    const minHoy = profile?.gymTodayDate === hoy && !isAtGym && (profile?.gymTodayMinutes ?? 0) > 0
-      ? profile.gymTodayMinutes
-      : 0;
-    // Pasos: usa valor en tiempo real del sensor; fallback a Firestore si es mayor
-    const steps = Math.max(liveSteps ?? 0, profile?.stepsToday ?? 0);
+    d.setDate(d.getDate() + offset);
+    return d;
+  };
+
+  const isHistoryMode  = dayOffset < 0;
+  const selectedDate   = getOffsetDate(dayOffset);
+  const selectedDateKey = selectedDate.toISOString().split('T')[0];
+  // Fecha de "hoy" en LOCAL (no UTC) — es el mismo cálculo que ya usaba esta
+  // pantalla para comparar contra gymTodayDate. Se mantiene aparte de
+  // selectedDateKey (que es la misma clave UTC-based que ya usa Home para
+  // buscar en historyMap) para no alterar el comportamiento actual de "hoy".
+  const todayKeyLocal = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
+  const dayLabel = dayOffset === 0 ? 'kcal hoy'
+    : dayOffset === -1 ? 'kcal ayer'
+    : `kcal ${DAY_ABBR[selectedDate.getDay()]}`;
+
+  const { caloriasData, gymMinSelected, stepsSelected } = useMemo(() => {
+    // Pasos: hoy usa el valor en tiempo real del sensor (igual que siempre);
+    // días anteriores usan el mismo historial de 7 días que ya consulta Home.
+    const steps = dayOffset === 0
+      ? Math.max(liveSteps ?? 0, profile?.stepsToday ?? 0)
+      : (historyMap[selectedDateKey] ?? 0);
+
+    // Gym: hoy usa exactamente la misma lógica que ya existía (gymTodayDate/
+    // gymTodayMinutes, el valor "en vivo" del perfil — sin depender del historial
+    // recién agregado, para no cambiar el comportamiento actual). Días anteriores
+    // usan gymHistory, el historial diario por fecha (misma fuente que a partir
+    // de ahora escribe cada checkout real, más el backfill de la última sesión).
+    const minSelected = dayOffset === 0
+      ? (profile?.gymTodayDate === todayKeyLocal && !isAtGym && (profile?.gymTodayMinutes ?? 0) > 0
+          ? profile.gymTodayMinutes
+          : 0)
+      : (gymHistoryMap[selectedDateKey] ?? 0);
+
     return {
-      caloriasData: calcCalorias(profile?.peso ?? 70, profile?.altura ?? 170, edad ?? 30, steps, minHoy),
-      gymMinHoy: minHoy,
+      caloriasData: calcCalorias(profile?.peso ?? 70, profile?.altura ?? 170, edad ?? 30, steps, minSelected, profile?.sexo),
+      gymMinSelected: minSelected,
+      stepsSelected: steps,
     };
-  }, [profile?.peso, profile?.altura, profile?.stepsToday, profile?.gymTodayDate, profile?.gymTodayMinutes, isAtGym, liveSteps, edad]);
+  }, [
+    dayOffset, historyMap, gymHistoryMap, selectedDateKey, todayKeyLocal,
+    profile?.peso, profile?.altura, profile?.stepsToday, profile?.gymTodayDate, profile?.gymTodayMinutes,
+    isAtGym, liveSteps, edad, profile?.sexo,
+  ]);
+
+  // ── Swipe (mismo patrón que Home: RNGH sobre un shared value, sin tocar el ScrollView) ──
+  const calTranslateX   = useSharedValue(0);
+  const dayOffsetShared = useSharedValue(0);
+  useEffect(() => { dayOffsetShared.value = dayOffset; }, [dayOffset]);
+
+  const navigateCalDay = useCallback((dir) => {
+    const cur  = dayOffsetShared.value;
+    const next = Math.max(-6, Math.min(0, cur + dir));
+    if (next === cur) {
+      calTranslateX.value = withSpring(0, { damping: 35, stiffness: 400 });
+      return;
+    }
+    const exitSide = dir < 0 ? 150 : -150;
+    calTranslateX.value = withTiming(exitSide, { duration: 150 }, () => {
+      'worklet';
+      runOnJS(setDayOffset)(next);
+      calTranslateX.value = -exitSide;
+      calTranslateX.value = withSpring(0, { damping: 35, stiffness: 400 });
+    });
+  }, [calTranslateX, dayOffsetShared]);
+
+  const calCardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: calTranslateX.value }],
+    opacity: interpolate(Math.abs(calTranslateX.value), [0, 100], [1, 0.25], Extrapolation.CLAMP),
+  }));
+
+  const calPanGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetX([-8, 8])
+    .failOffsetY([-20, 20])
+    .onUpdate((e) => {
+      'worklet';
+      let dx = e.translationX;
+      if (dx > 0 && dayOffsetShared.value <= -6) dx *= 0.1;
+      if (dx < 0 && dayOffsetShared.value >= 0)  dx *= 0.1;
+      calTranslateX.value = dx * 0.7;
+    })
+    .onEnd((e) => {
+      'worklet';
+      const cur = dayOffsetShared.value;
+      if      (e.translationX >  40 && cur > -6) runOnJS(navigateCalDay)(-1);
+      else if (e.translationX < -40 && cur <  0) runOnJS(navigateCalDay)(1);
+      else calTranslateX.value = withSpring(0, { damping: 35, stiffness: 400 });
+    }),
+  [navigateCalDay, dayOffsetShared, calTranslateX]);
 
   const sexo  = profile?.sexo
     ? (profile.sexo === 'masculino' ? 'Masc.' : 'Fem.')
@@ -385,32 +482,37 @@ export default function PerfilScreen({ navigation }) {
           </View>
         </View>
 
-        {/* ── Calorías quemadas ── */}
-        <View style={styles.calCard}>
-          <View style={styles.calLeft}>
-            <Text style={styles.calFireIcon}>🔥</Text>
-            <Text style={styles.calTotal}>{caloriasData.total.toLocaleString('es-AR')}</Text>
-            <Text style={styles.calLabel}>kcal hoy</Text>
-          </View>
-          <View style={styles.calDivider} />
-          <View style={styles.calRight}>
-            <View style={styles.calRow}>
-              <Text style={styles.calRowIcon}>🚶</Text>
-              <View>
-                <Text style={styles.calRowValue}>{caloriasData.calPasos} kcal</Text>
-                <Text style={styles.calRowLabel}>{Math.max(liveSteps ?? 0, profile?.stepsToday ?? 0).toLocaleString('es-AR')} pasos</Text>
+        {/* ── Calorías quemadas (deslizable: mismo gesto de días que Home) ── */}
+        <GestureDetector gesture={calPanGesture}>
+          <Animated.View style={calCardStyle}>
+            <View style={[styles.calCard, isHistoryMode && styles.calCardHistory]}>
+              <View style={styles.calLeft}>
+                <Text style={styles.calFireIcon}>🔥</Text>
+                <Text style={styles.calTotal}>{caloriasData.total.toLocaleString('es-AR')}</Text>
+                <Text style={styles.calLabel}>{dayLabel}</Text>
+              </View>
+              <View style={styles.calDivider} />
+              <View style={styles.calRight}>
+                <View style={styles.calRow}>
+                  <Text style={styles.calRowIcon}>🚶</Text>
+                  <View>
+                    <Text style={styles.calRowValue}>{caloriasData.calPasos} kcal</Text>
+                    <Text style={styles.calRowLabel}>{stepsSelected.toLocaleString('es-AR')} pasos</Text>
+                  </View>
+                </View>
+                <View style={[styles.calRow, { marginTop: 8 }]}>
+                  <Text style={styles.calRowIcon}>💪</Text>
+                  <View>
+                    <Text style={styles.calRowValue}>{caloriasData.calGym} kcal</Text>
+                    <Text style={styles.calRowLabel}>
+                      {gymMinSelected > 0 ? `Gym · ${gymMinSelected} min` : 'Sin visita al gym'}
+                    </Text>
+                  </View>
+                </View>
               </View>
             </View>
-            <View style={[styles.calRow, { marginTop: 8 }]}>
-              <Text style={styles.calRowIcon}>💪</Text>
-              <View>
-                <Text style={styles.calRowValue}>{caloriasData.calGym} kcal</Text>
-                <Text style={styles.calRowLabel}>{gymMinHoy > 0 ? `Gym · ${gymMinHoy} min` : 'Sin visita al gym hoy'}</Text>
-              </View>
-            </View>
-
-          </View>
-        </View>
+          </Animated.View>
+        </GestureDetector>
 
         {/* ── Tabs ── */}
         <View style={styles.tabs}>
@@ -1508,6 +1610,17 @@ function makeStyles(colors) { return StyleSheet.create({
     marginBottom: spacing.xl,
     alignItems: 'center',
     gap: spacing.md,
+  },
+  // Mismo tratamiento visual que el StatCard "highlighted" de Home cuando se
+  // está navegando un día anterior.
+  calCardHistory: {
+    borderColor: colors.primary,
+    borderWidth: 1.5,
+    shadowColor: colors.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
   },
   calLeft: {
     alignItems: 'center',

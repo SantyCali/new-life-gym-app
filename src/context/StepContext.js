@@ -7,32 +7,18 @@ import useSteps from '../hooks/useSteps';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import {
-  calcCalories, calcDistanceKm, todayDateString, localDateString, openHealthConnectInstall, getStepsForDate,
+  calcCalories, calcDistanceKm, computeAge, todayDateString, localDateString, openHealthConnectInstall, getStepsForDate,
 } from '../services/stepService';
 import {
   awardXPAndCoins, checkAndAwardGymReward, updateStreak,
   XP_PER_1K_STEPS, XP_GOAL_BONUS,
-  STEPS_FOR_STREAK,
+  markGymRewardPending, clearGymRewardPending,
 } from '../services/gamificationService';
 import { subscribeToUserPresence } from '../services/gymService';
 import { stepMilestones } from '../constants/mockData';
 
 const DEFAULT_GOAL = 10000;
 const StepContext  = createContext(null);
-
-function computeAge(fechaNacimiento) {
-  if (!fechaNacimiento) return 30;
-  try {
-    // Firestore Timestamp → .toDate(), ISO string → new Date(...)
-    const birth = fechaNacimiento?.toDate ? fechaNacimiento.toDate() : new Date(fechaNacimiento);
-    if (isNaN(birth.getTime())) return 30;
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    const m = now.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-    return Math.max(10, Math.min(100, age));
-  } catch { return 30; }
-}
 
 export function StepProvider({ children }) {
   const { user }    = useAuth();
@@ -43,7 +29,10 @@ export function StepProvider({ children }) {
   const heightCm = profile?.altura  ? Number(profile.altura) : 170;
   const ageYears = computeAge(profile?.fechaNacimiento);
 
-  const calories   = calcCalories(steps, weightKg, ageYears);
+  // "calories" = activas (netas, exclusivas de caminar) — es lo que muestra la
+  // tarjeta "Quemadas" del Home. "totalCalories" queda disponible para quien
+  // necesite el gasto bruto (incluye lo que se hubiese quemado en reposo).
+  const { active: calories, total: totalCalories } = calcCalories(steps, weightKg, heightCm, ageYears, profile?.sexo);
   const distanceKm = calcDistanceKm(steps, heightCm);
 
   // Keep latest profile in a ref so gamification effects don't depend on profile object
@@ -218,8 +207,12 @@ export function StepProvider({ children }) {
   }, [steps, user?.uid, loading]);
 
   // ── Gamification: streak ──────────────────────────────────────────────────────
+  // La racha solo debe sumar el día de hoy cuando se alcanza el objetivo diario
+  // real del usuario (profile.dailyStepGoal) — no un umbral fijo arbitrario.
   useEffect(() => {
-    if (!user?.uid || !profile || steps < STEPS_FOR_STREAK) return;
+    if (!user?.uid || !profile) return;
+    const streakGoal = profile.dailyStepGoal ?? DEFAULT_GOAL;
+    if (steps < streakGoal) return;
     const today = todayDateString();
     if (profile.lastActiveDate === today) return;
     updateStreak(user.uid, profile.racha ?? 0, profile.lastActiveDate ?? null);
@@ -230,7 +223,15 @@ export function StepProvider({ children }) {
     const gymDni = profile?.gymDni;
     if (!gymDni || !user?.uid) return;
     return subscribeToUserPresence(gymDni, (isPresent) => {
-      if (isPresent) checkAndAwardGymReward(user.uid);
+      if (!isPresent) return;
+      // checkAndAwardGymReward ya no traga sus propios errores (para que el
+      // flujo offline en GymEventsContext.js pueda distinguir "ya premiado"
+      // de "sin conexión") — acá replicamos el mismo manejo para no dejar una
+      // promesa sin capturar y para no perder el pendiente si esta ruta es la
+      // que efectivamente falla por falta de red.
+      checkAndAwardGymReward(user.uid)
+        .then(() => clearGymRewardPending(user.uid))
+        .catch(() => markGymRewardPending(user.uid));
     });
   }, [profile?.gymDni, user?.uid]);
 
@@ -239,6 +240,7 @@ export function StepProvider({ children }) {
   const value = {
     steps,
     calories,
+    totalCalories,
     distanceKm,
     available,
     loading,

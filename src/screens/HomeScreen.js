@@ -31,6 +31,7 @@ import { subscribeToClientRoutine } from '../services/routineService';
 import { subscribeToAnnouncement } from '../services/announcementService';
 import { MUSCLE_GROUPS } from '../constants/exercises';
 import { useStepContext } from '../context/StepContext';
+import { calcCalories, computeAge } from '../services/stepService';
 import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
 import { XP_GYM_VISIT } from '../services/gamificationService';
@@ -49,7 +50,9 @@ export default function HomeScreen({ navigation }) {
   const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading } = useStepContext();
   const { activeCount: gymCount } = useGymCheckins();
 
-  const weightKgHome = profile?.peso ? Number(profile.peso) : 70;
+  const weightKgHome = profile?.peso   ? Number(profile.peso)   : 70;
+  const heightCmHome  = profile?.altura ? Number(profile.altura) : 170;
+  const ageYearsHome  = computeAge(profile?.fechaNacimiento);
 
   // ── Animación del contador de pasos ──────────────────────────────────────────
   const [animSteps, setAnimSteps]   = useState(0);
@@ -164,7 +167,7 @@ export default function HomeScreen({ navigation }) {
   const displayWalkM   = displayWalkMin % 60;
   const walkLabel      = displayWalkH > 0 ? `${displayWalkH}h ${displayWalkM}m` : `${displayWalkM}m`;
   const baseCalories = isHistoryMode
-    ? Math.round(safeSteps * 0.04 * (weightKgHome / 70))
+    ? calcCalories(safeSteps, weightKgHome, heightCmHome, ageYearsHome, profile?.sexo).active
     : (Number.isFinite(realCalories) ? realCalories : 0);
 
   const stepPercent = displayPercent;

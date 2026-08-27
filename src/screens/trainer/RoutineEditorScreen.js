@@ -25,6 +25,14 @@ import { getExerciseImage, getExerciseGif } from '../../constants/exerciseMedia'
 
 const ITEM_HEIGHT = 104; // approximate card height for DnD calculations
 
+// Normaliza texto para comparar en el buscador de ejercicios: quita tildes/diacríticos
+// y pasa a minúsculas. Solo se usa para la comparación — no toca el nombre mostrado.
+const normalizeSearch = (text) =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function RoutineEditorScreen({ route, navigation }) {
   const { cliente, routine: existingRoutine } = route.params;
@@ -501,8 +509,8 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
   }));
 
   const filteredExercises = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    if (q) return EXERCISES.filter(e => e.nombre.toLowerCase().includes(q));
+    const q = normalizeSearch(search.trim());
+    if (q) return EXERCISES.filter(e => normalizeSearch(e.nombre).includes(q));
     if (activeGroup) return EXERCISES_BY_GROUP[activeGroup] ?? [];
     return [];
   }, [search, activeGroup]);

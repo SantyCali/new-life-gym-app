@@ -38,6 +38,20 @@ export function midnightToday() {
   return d;
 }
 
+// Edad a partir de una fecha de nacimiento (Firestore Timestamp o string/Date ISO).
+export function computeAge(fechaNacimiento) {
+  if (!fechaNacimiento) return 30;
+  try {
+    const birth = fechaNacimiento?.toDate ? fechaNacimiento.toDate() : new Date(fechaNacimiento);
+    if (isNaN(birth.getTime())) return 30;
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const m = now.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
+    return Math.max(10, Math.min(100, age));
+  } catch { return 30; }
+}
+
 // ── iOS: expo-sensors CMPedometer ─────────────────────────────────────────────
 
 // Request motion/activity permission before using the pedometer (Android 10+ requires it)
@@ -181,16 +195,63 @@ export async function getStepsForDate(date) {
 
 // ── Calculations ──────────────────────────────────────────────────────────────
 
-export function calcCalories(steps, weightKg = 70, ageYears = 30) {
-  const base = steps * 0.04 * (weightKg / 70);
-  // Younger metabolism slightly higher, older slightly lower (±10% max)
-  const ageFactor = Math.max(0.90, Math.min(1.10, 1 + (25 - Math.max(15, Math.min(75, ageYears))) * 0.004));
-  return Math.round(base * ageFactor);
-}
-
 export function calcDistanceKm(steps, heightCm = 170) {
   const strideM = (heightCm * 0.414) / 100;
   return parseFloat(((steps * strideM) / 1000).toFixed(2));
+}
+
+// MET de caminata según velocidad, ecuación ACSM (superficie plana, sin inclinación):
+// VO2 (ml/kg/min) = 0.1 * velocidad(m/min) + 3.5 (reposo). MET = VO2 / 3.5.
+// Esta ecuación ya está normalizada por kg de peso corporal y es válida para
+// cualquier sexo/edad: la velocidad y la masa corporal son las únicas variables
+// que determinan el costo energético de caminar, no hace falta un factor aparte.
+function walkingMET(speedKmH) {
+  const speedMMin = (speedKmH * 1000) / 60;
+  const vo2 = 0.1 * speedMMin + 3.5;
+  return vo2 / 3.5;
+}
+
+// Tasa metabólica basal (Mifflin-St Jeor, kcal/día) — la ecuación estándar y
+// validada en nutrición clínica para estimar el gasto en reposo. Es la que sí
+// depende legítimamente de sexo y edad (a diferencia del costo de caminar en sí).
+function bmrKcalPerDay(weightKg, heightCm, ageYears, sex) {
+  const base = 10 * weightKg + 6.25 * heightCm - 5 * ageYears;
+  if (sex === 'masculino') return base + 5;
+  if (sex === 'femenino')  return base - 161;
+  return base - 78; // sexo no especificado: punto medio entre ambos offsets
+}
+
+// Calorías por caminar, basadas en MET (fisiológicamente fundado) en vez de una
+// constante fija por paso. Usa la distancia derivada de la zancada (altura) y el
+// tiempo real caminando si está disponible (si no, se estima con una cadencia
+// típica de caminata moderada, ~100 pasos/min).
+// - total:  gasto BRUTO mientras se camina (MET × peso × tiempo).
+// - active: gasto NETO por caminar exclusivamente — se le resta el gasto que de
+//   todos modos se hubiese quemado en reposo durante ese mismo tiempo (BMR/24 × horas).
+export function calcCalories(steps, weightKg = 70, heightCm = 170, ageYears = 30, sex = null, minutesWalking = null) {
+  if (!steps || steps <= 0) return { active: 0, total: 0 };
+
+  const kg  = weightKg > 0 ? weightKg : 70;
+  const cm  = heightCm > 0 ? heightCm : 170;
+  const age = ageYears > 0 ? ageYears : 30;
+
+  const distanceKm = calcDistanceKm(steps, cm);
+
+  // Tiempo caminando: real si está disponible, si no se estima con cadencia típica
+  // de ~100 pasos/min (umbral estándar de "caminata de intensidad moderada").
+  const hours = minutesWalking > 0 ? minutesWalking / 60 : steps / 6000;
+  const speedKmH = hours > 0 ? distanceKm / hours : 4.8;
+
+  const met = Math.max(2.0, Math.min(6.0, walkingMET(speedKmH)));
+
+  const totalKcal = met * kg * hours;
+  const restingKcalDuringWalk = (bmrKcalPerDay(kg, cm, age, sex) / 24) * hours;
+  const activeKcal = Math.max(0, totalKcal - restingKcalDuringWalk);
+
+  return {
+    total:  Math.round(totalKcal),
+    active: Math.round(activeKcal),
+  };
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
