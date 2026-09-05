@@ -135,3 +135,26 @@ export async function updateStreak(uid, currentRacha, lastActiveDate) {
     await updateDoc(ref, updates);
   } catch {}
 }
+
+// updateStreak (arriba) solo se llama cuando el usuario SÍ llega al objetivo del
+// día — nunca escribe nada si falla, así que la racha quedaba con el último
+// valor guardado hasta la próxima vez que volviera a cumplir el objetivo (se
+// veía "trabada" durante los días de por medio en vez de mostrar 0). Esta
+// función corta esa racha apenas se detecta el corte real: si ya pasó al menos
+// un día completo sin actividad (lastActiveDate no es hoy NI ayer, o sea que
+// ayer no se llegó al objetivo), la reinicia a 0 sin esperar a que el usuario
+// vuelva a cumplir el objetivo.
+export async function resetStreakIfBroken(uid, currentRacha, lastActiveDate) {
+  if (!uid || !((currentRacha ?? 0) > 0)) return;
+  const today = todayDateString();
+  if (lastActiveDate === today) return;
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = localDateString(yesterday);
+  // Si el último día activo fue ayer, todavía puede salvar la racha hoy —
+  // no se corta hasta que efectivamente pase el día sin lograrlo.
+  if (lastActiveDate === yStr) return;
+  try {
+    await updateDoc(doc(db, 'users', uid), { racha: 0 });
+  } catch {}
+}

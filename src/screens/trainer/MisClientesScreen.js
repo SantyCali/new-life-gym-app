@@ -141,17 +141,23 @@ function ClientRow({ client, colors, styles, onPress }) {
     ? `data:image/jpeg;base64,${client.photoBase64}`
     : null;
 
-  const objetivo = client.objetivo ?? '—';
+  const objetivo  = client.objetivo ?? '—';
+  const nivelJuego = client.nivelJuego ?? 1;
 
   return (
     <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.75}>
-      {photoUri ? (
-        <Image source={{ uri: photoUri }} style={styles.avatar} />
-      ) : (
-        <View style={styles.avatarFallback}>
-          <Text style={styles.avatarText}>{initials}</Text>
+      <View style={styles.avatarBox}>
+        {photoUri ? (
+          <Image source={{ uri: photoUri }} style={styles.avatar} />
+        ) : (
+          <View style={styles.avatarFallback}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+        )}
+        <View style={styles.levelBadge}>
+          <Text style={styles.levelBadgeText}>{nivelJuego}</Text>
         </View>
-      )}
+      </View>
       <View style={styles.rowInfo}>
         <Text style={styles.rowName}>
           {client.nombre ?? ''} {client.apellido ?? ''}
@@ -247,6 +253,7 @@ function makeStyles(colors) {
       paddingVertical: 14,
       gap: 14,
     },
+    avatarBox: {},
     avatar: {
       width: 50, height: 50, borderRadius: 25,
       borderWidth: 2, borderColor: colors.primary,
@@ -261,6 +268,19 @@ function makeStyles(colors) {
       fontSize: typography.sizes.md,
       fontWeight: typography.weights.black,
       color: colors.primary,
+    },
+    levelBadge: {
+      position: 'absolute',
+      bottom: -2, right: -2,
+      width: 18, height: 18, borderRadius: 9,
+      backgroundColor: colors.primary,
+      alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1.5, borderColor: colors.background,
+    },
+    levelBadgeText: {
+      fontSize: 10,
+      fontWeight: typography.weights.black,
+      color: colors.textInverse,
     },
     rowInfo: { flex: 1 },
     rowName: {

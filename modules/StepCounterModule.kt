@@ -77,6 +77,47 @@ class StepCounterModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    // Total final de un día ya cerrado que el servicio nativo todavía no confirmó
+    // subido a Firestore (ver StepCounterService.stashPendingSync). Devuelve
+    // null si no hay nada pendiente. Se consulta al abrir la app y desde la
+    // tarea en background — ver src/services/backgroundStepsSync.js.
+    @ReactMethod
+    fun getPendingHistorySync(promise: Promise) {
+        try {
+            val prefs = reactApplicationContext
+                .getSharedPreferences(StepCounterService.PREFS_NAME, Context.MODE_PRIVATE)
+            val date  = prefs.getString(StepCounterService.KEY_PENDING_SYNC_DATE, null)
+            val steps = prefs.getInt(StepCounterService.KEY_PENDING_SYNC_STEPS, 0)
+            if (date.isNullOrEmpty() || steps <= 0) {
+                promise.resolve(null)
+            } else {
+                val result = Arguments.createMap()
+                result.putString("date", date)
+                result.putInt("steps", steps)
+                promise.resolve(result)
+            }
+        } catch (e: Exception) {
+            promise.reject("ERR_GET_PENDING_SYNC", e.message)
+        }
+    }
+
+    // Se llama después de subir con éxito el valor de getPendingHistorySync a
+    // Firestore, para no volver a subir lo mismo la próxima vez.
+    @ReactMethod
+    fun clearPendingHistorySync(promise: Promise) {
+        try {
+            val prefs = reactApplicationContext
+                .getSharedPreferences(StepCounterService.PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .remove(StepCounterService.KEY_PENDING_SYNC_DATE)
+                .remove(StepCounterService.KEY_PENDING_SYNC_STEPS)
+                .apply()
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_CLEAR_PENDING_SYNC", e.message)
+        }
+    }
+
     // Lee el valor actual de la preferencia silenciosa desde SharedPreferences
     @ReactMethod
     fun getNotificationSilent(promise: Promise) {

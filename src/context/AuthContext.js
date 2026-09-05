@@ -13,6 +13,19 @@ import {
 
 export const AuthContext = createContext(null);
 
+// getDoc() de Firestore no tiene timeout propio: si la red se cuelga (o el
+// build tiene algún problema para llegar al backend), la promesa nunca resuelve
+// ni rechaza. Como ese await está en el único camino que puede dejar
+// "initializing" en true para siempre (ver más abajo), lo acotamos acá.
+const FIRESTORE_ROLE_LOOKUP_TIMEOUT_MS = 8000;
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('firestore-timeout')), ms)),
+  ]);
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser]           = useState(null);
   const [isTrainer, setIsTrainer] = useState(false);
@@ -28,7 +41,15 @@ export function AuthProvider({ children }) {
         // Sesión activa — guardar flag para el retry al próximo arranque
         AsyncStorage.setItem(SESSION_KEY, '1').catch(() => {});
         try {
-          const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          // Acotado con timeout: la identidad ya la confirmó Firebase Auth
+          // (rápido, no depende de Firestore). Si la búsqueda del rol se
+          // cuelga por red, no debe bloquear el arranque — el usuario entra
+          // igual, como "usuario" normal (se puede corregir el rol después,
+          // una vez que Firestore responda en otra pantalla/reintento).
+          const snap = await withTimeout(
+            getDoc(doc(db, 'users', firebaseUser.uid)),
+            FIRESTORE_ROLE_LOOKUP_TIMEOUT_MS
+          );
           const data  = snap.exists() ? snap.data() : {};
           const rawRol = data.rol ?? 'usuario';
           const roles  = Array.isArray(rawRol)

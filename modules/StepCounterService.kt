@@ -5,8 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
-import android.content.res.Configuration
-import android.graphics.Color
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -17,7 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import android.widget.RemoteViews
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.util.Calendar
 
@@ -28,6 +26,7 @@ class StepCounterService : Service(), SensorEventListener {
         // lockscreenVisibility/importance en un canal ya existente). Se versiona el ID
         // para que la corrección de visibilidad en pantalla de bloqueo aplique también
         // a instalaciones que ya tenían la app.
+        private const val TAG       = "NLGStepCounter"
         const val CHANNEL_ID        = "nlg_pasos_v2"
         const val CHANNEL_SILENT_ID = "nlg_pasos_silencioso_v2"
         const val NOTIFICATION_ID   = 7001
@@ -39,6 +38,10 @@ class StepCounterService : Service(), SensorEventListener {
         const val KEY_LAST_DATE     = "lastDate"
         const val KEY_SILENT        = "silentNotification"
         const val KEY_GOAL          = "dailyGoal"
+        // Último día "cerrado" (ya no es hoy) cuyo total todavía no se confirmó
+        // subido a Firestore — ver stashPendingSync().
+        const val KEY_PENDING_SYNC_DATE  = "pendingSyncDate"
+        const val KEY_PENDING_SYNC_STEPS = "pendingSyncSteps"
         const val ACTION_UPDATE_NOTIF     = "NLG_UPDATE_NOTIFICATION"
         // Disparada por el deleteIntent de la notificación cuando el usuario la desliza.
         const val ACTION_NOTIF_DISMISSED  = "NLG_NOTIF_DISMISSED"
@@ -132,6 +135,7 @@ class StepCounterService : Service(), SensorEventListener {
         if (intent?.action == ACTION_UPDATE_NOTIF) {
             // El usuario cambió el switch de Configuración: se aplica sin condiciones,
             // sea para mostrar o para pasar a silencioso.
+            Log.d(TAG, "ACTION_UPDATE_NOTIF recibido, silent=${prefs.getBoolean(KEY_SILENT, false)}")
             republishNotification()
             return START_STICKY
         }
@@ -163,15 +167,23 @@ class StepCounterService : Service(), SensorEventListener {
     // y al reponer la notificación tras un swipe (ver ACTION_NOTIF_DISMISSED).
     @Suppress("DEPRECATION")
     private fun republishNotification() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            stopForeground(true)
-        }
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, buildNotification(todaySteps), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification(todaySteps))
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                stopForeground(true)
+            }
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIFICATION_ID, buildNotification(todaySteps), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification(todaySteps))
+            }
+            Log.d(TAG, "republishNotification OK, silent=${prefs.getBoolean(KEY_SILENT, false)}, canal=${if (prefs.getBoolean(KEY_SILENT, false)) CHANNEL_SILENT_ID else CHANNEL_ID}")
+        } catch (e: Exception) {
+            // Si esto falla en silencio (p. ej. una restricción del fabricante al
+            // reiniciar el foreground state), antes no quedaba ningún rastro —
+            // con este log al menos se puede ver la causa real en logcat.
+            Log.e(TAG, "republishNotification FALLÓ", e)
         }
     }
 
@@ -201,7 +213,9 @@ class StepCounterService : Service(), SensorEventListener {
 
         when {
             today != lastDate -> {
-                // Nuevo día: arrancamos el contador de hoy en cero.
+                // Nuevo día: preservamos el total final del día que termina (ver
+                // stashPendingSync) antes de arrancar el contador de hoy en cero.
+                stashPendingSync(lastDate, todaySteps)
                 todaySteps = 0
                 lastDate   = today
                 resyncBaseline(accumulated, nowElapsed, currentBoot)
@@ -273,12 +287,31 @@ class StepCounterService : Service(), SensorEventListener {
             bootTimestamp          = prefs.getLong(KEY_BOOT_TIMESTAMP, 0L)
             lastDate                = today
         } else {
+            // El servicio estuvo parado (matado por el fabricante, reboot, etc.)
+            // al menos desde antes de la medianoche pasada: 'saved' es el último
+            // día que llegó a guardar, con su conteo final en KEY_TODAY_STEPS.
+            // Si no lo preservamos acá, se pisa con el 0 del día nuevo sin que
+            // nadie (ni la app ni la tarea en background) haya podido subirlo.
+            if (saved.isNotEmpty()) {
+                stashPendingSync(saved, prefs.getInt(KEY_TODAY_STEPS, 0))
+            }
             todaySteps             = 0
             lastAccumulated        = 0L
             lastAccumulatedElapsed = 0L
             bootTimestamp          = 0L
             lastDate                = today
         }
+    }
+
+    // Guarda el total final de un día que ya terminó en un slot aparte, para que
+    // la app (o la tarea en background) lo pueda subir a Firestore la próxima vez
+    // que tenga oportunidad — ver stepCounterModule.getPendingHistorySync().
+    private fun stashPendingSync(outgoingDate: String, outgoingSteps: Int) {
+        if (outgoingSteps <= 0) return
+        prefs.edit()
+            .putString(KEY_PENDING_SYNC_DATE, outgoingDate)
+            .putInt(KEY_PENDING_SYNC_STEPS, outgoingSteps)
+            .apply()
     }
 
     private fun saveData() {
@@ -326,11 +359,6 @@ class StepCounterService : Service(), SensorEventListener {
         }
     }
 
-    private fun isDarkMode(): Boolean {
-        val flags = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-        return flags == Configuration.UI_MODE_NIGHT_YES
-    }
-
     private fun buildNotification(steps: Int): Notification {
         val isSilent = prefs.getBoolean(KEY_SILENT, false)
         val channelId = if (isSilent) CHANNEL_SILENT_ID else CHANNEL_ID
@@ -352,16 +380,17 @@ class StepCounterService : Service(), SensorEventListener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Layout compacto: ícono + "N pasos" en una sola fila
-        val views = RemoteViews(packageName, R.layout.notification_steps)
-        views.setTextViewText(R.id.notif_steps_text, formatSteps(steps))
-
-        // Color del texto según tema del sistema
-        val textColor = if (isDarkMode()) Color.WHITE else Color.BLACK
-        views.setTextColor(R.id.notif_steps_text, textColor)
-
+        // Notificación con el template ESTÁNDAR de Android (sin RemoteViews/vista
+        // custom). Se probó un layout personalizado (ícono + texto en fila propia)
+        // y dejó de mostrarse directamente en pantalla de bloqueo en MIUI — solo
+        // aparecía al desplegar la bandeja completa. El sistema no siempre puede
+        // inflar una RemoteViews custom en la superficie restringida del lock
+        // screen y, quedando en blanco ahí, algunos fabricantes (Xiaomi incluido)
+        // optan por no mostrar nada en lugar de mostrarla rota. El template
+        // estándar lo renderiza el propio sistema, así que es la única forma de
+        // garantizar que se vea igual en todos lados (bandeja y lock screen).
         return NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_menu_directions)
+            .setSmallIcon(R.mipmap.ic_launcher_foreground)
             .setContentTitle("New Life")
             .setContentText(formatSteps(steps))
             .setContentIntent(pendingIntent)
@@ -374,8 +403,6 @@ class StepCounterService : Service(), SensorEventListener {
             // Android igual respeta la privacidad del usuario por encima de esto).
             // SECRET en modo silencioso: no se revela nada.
             .setVisibility(if (isSilent) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PUBLIC)
-            .setCustomContentView(views)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .build()
     }
 

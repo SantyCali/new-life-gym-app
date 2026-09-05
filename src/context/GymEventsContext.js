@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import { subscribeToUserPresence, advanceRoutineDay, ACTIVE_MS } from '../services/gymService';
+import { checkGymPresenceInBackground } from '../services/backgroundGymSync';
 import { subscribeToClientRoutine } from '../services/routineService';
 import {
   checkAndAwardGymReward, XP_GYM_VISIT,
@@ -112,6 +113,21 @@ export function GymEventsProvider({ children }) {
     return subscribeToClientRoutine(user.uid, setRoutine);
   }, [user?.uid]);
 
+  // ── Catch-up de presencia en el gym al abrir la app ───────────────────────────
+  // El listener de subscribeToUserPresence de acá abajo solo detecta entrada/
+  // salida mientras la app está montada. Si el usuario entró y salió del gym
+  // con la app cerrada, la única vía era la tarea en background (WorkManager),
+  // que en fabricantes agresivos con batería (MIUI) puede tardar horas en
+  // correr o no correr nunca. Reutiliza exactamente la misma lógica (ver
+  // backgroundGymSync.js) para no depender solo de esa tarea: la más probable
+  // oportunidad real de detectarlo es que el usuario abra la app.
+  const hasCheckedGymBgRef = useRef(false);
+  useEffect(() => {
+    if (!user?.uid || hasCheckedGymBgRef.current) return;
+    hasCheckedGymBgRef.current = true;
+    checkGymPresenceInBackground(user.uid).catch(() => {});
+  }, [user?.uid]);
+
   // Initialize day index from stored profile
   useEffect(() => {
     if (profile?.gymRoutineDayIndex != null) {
@@ -212,8 +228,18 @@ export function GymEventsProvider({ children }) {
 
     } else if (!isAtGym && was) {
       // ── SALIDA: calcular minutos reales ──
+      // No usar Date.now() directo como fin de sesión: si la app quedó en
+      // segundo plano (bloqueada) mucho tiempo después de la última entrada
+      // real, "ahora" puede ser horas después de que la persona ya se fue,
+      // inflando los minutos (y por lo tanto las calorías) de forma irreal.
+      // La presencia real nunca dura más que el último check-in + ACTIVE_MS
+      // (ventana de 90 min que ya usa subscribeToUserPresence), así que el
+      // fin de sesión se acota a eso como máximo.
       if (user?.uid && gymEntryTimeRef.current) {
-        const minutes = Math.max(1, Math.round((Date.now() - gymEntryTimeRef.current) / 60000));
+        const presenceEnd = latestGymCheckinMsRef.current
+          ? Math.min(Date.now(), latestGymCheckinMsRef.current + ACTIVE_MS)
+          : Date.now();
+        const minutes = Math.max(1, Math.round((presenceEnd - gymEntryTimeRef.current) / 60000));
         updateDoc(doc(db, 'users', user.uid), { gymTodayMinutes: minutes }).catch(() => {});
         // Historial diario de gym (mismo patrón que stepsHistory): si el usuario
         // entra y sale varias veces el mismo día, esto refleja la última sesión,

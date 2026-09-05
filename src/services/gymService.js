@@ -211,6 +211,28 @@ export async function advanceRoutineDay(uid, diasCount) {
   } catch { return 0; }
 }
 
+// Misma regla de "presente" que usa el panel admin: algún check-in de ese DNI,
+// no marcado inactivo, dentro de la ventana ACTIVE_MS y del día de hoy.
+// Compartida por subscribeToUserPresence (listener en vivo) y
+// getUserPresenceOnce (chequeo puntual, sin listener — ver más abajo).
+function computePresence(docs) {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const midnightMs = midnight.getTime();
+  const cutoffMs   = Date.now() - ACTIVE_MS;
+
+  let latestCheckinMs = 0;
+  const present = docs.some(d => {
+    const data = d.data();
+    if (data.activo === false) return false;
+    const ms = data.fechaHora?.toMillis?.() ?? 0;
+    if (ms > latestCheckinMs) latestCheckinMs = ms;
+    return ms > midnightMs && ms > cutoffMs;
+  });
+
+  return { present, latestCheckinMs };
+}
+
 // Subscribe to whether a specific DNI has an active check-in within the last ACTIVE_MS.
 // Applies the same 90-min window as the admin panel.
 // Also schedules a local timer to auto-clear presence when the window expires,
@@ -222,20 +244,7 @@ export function subscribeToUserPresence(gymDni, onPresent) {
   const unsub = onSnapshot(q, snap => {
     if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
 
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
-    const midnightMs = midnight.getTime();
-    const cutoffMs   = Date.now() - ACTIVE_MS;
-
-    let latestCheckinMs = 0;
-    const present = snap.docs.some(d => {
-      const data = d.data();
-      if (data.activo === false) return false;
-      const ms = data.fechaHora?.toMillis?.() ?? 0;
-      if (ms > latestCheckinMs) latestCheckinMs = ms;
-      return ms > midnightMs && ms > cutoffMs;
-    });
-
+    const { present, latestCheckinMs } = computePresence(snap.docs);
     onPresent(present, latestCheckinMs);
 
     if (present && latestCheckinMs > 0) {
@@ -248,4 +257,13 @@ export function subscribeToUserPresence(gymDni, onPresent) {
   });
 
   return () => { if (expiryTimer) clearTimeout(expiryTimer); unsub(); };
+}
+
+// Chequeo puntual (sin listener) de la misma presencia, para usar desde la
+// tarea en background — ahí no hay un componente montado que pueda sostener
+// un onSnapshot en vivo. Devuelve { present, latestCheckinMs }.
+export async function getUserPresenceOnce(gymDni) {
+  const q = query(COL, where('dni', '==', gymDni.trim()));
+  const snap = await getDocs(q);
+  return computePresence(snap.docs);
 }

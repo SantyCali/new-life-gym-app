@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, Switch, StyleSheet, Alert, Platform } from 'react-native';
+import { View, Text, Switch, StyleSheet, Alert, Platform, Linking } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +29,21 @@ export default function SettingsScreen({ navigation }) {
     });
   }, []);
 
+  async function applyToggle(newValue) {
+    try {
+      await setNotificationSilent(!newValue);
+      setNotificationVisible(newValue);
+    } catch (e) {
+      // La llamada nativa falló de verdad — mostrarlo en vez de fingir que
+      // el cambio se aplicó (antes este error se tragaba en silencio y el
+      // switch quedaba desincronizado de lo que mostraba la notificación real).
+      Alert.alert(
+        'No se pudo aplicar el cambio',
+        e?.message ?? 'Ocurrió un error al actualizar la notificación.',
+      );
+    }
+  }
+
   function handleToggle(newValue) {
     if (!newValue) {
       // Quiere ocultar la notificación
@@ -40,16 +55,12 @@ export default function SettingsScreen({ navigation }) {
           {
             text: 'Ocultar',
             style: 'destructive',
-            onPress: () => {
-              setNotificationVisible(false);
-              setNotificationSilent(true);
-            },
+            onPress: () => applyToggle(false),
           },
         ]
       );
     } else {
-      setNotificationVisible(true);
-      setNotificationSilent(false);
+      applyToggle(true);
     }
   }
 
@@ -94,6 +105,20 @@ export default function SettingsScreen({ navigation }) {
                 ? 'La notificación aparece en la barra de estado y pantalla de bloqueo. Podés ocultarla si preferís que no se vea, sin afectar el conteo de pasos.'
                 : 'La notificación está oculta. El contador de pasos sigue funcionando en segundo plano normalmente.'}
             </Text>
+
+            {notificationVisible && Platform.OS === 'android' && (
+              <TouchableOpacity
+                style={styles.settingsLink}
+                onPress={() => Linking.openSettings()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="settings-outline" size={16} color={colors.primary} />
+                <Text style={styles.settingsLinkText}>
+                  ¿No se ve en la pantalla de bloqueo? Revisá los permisos de notificación del sistema
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -179,6 +204,21 @@ function makeStyles(colors) {
       ...typography.caption,
       color:      colors.textTertiary,
       marginTop:  spacing.sm,
+      lineHeight: 18,
+    },
+    settingsLink: {
+      flexDirection:   'row',
+      alignItems:      'center',
+      gap:             spacing.sm,
+      backgroundColor: colors.surface,
+      borderRadius:    radius.lg,
+      padding:         spacing.md,
+      marginTop:       spacing.sm,
+    },
+    settingsLinkText: {
+      ...typography.caption,
+      color:      colors.text,
+      flex:       1,
       lineHeight: 18,
     },
     emptyState: {

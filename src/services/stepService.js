@@ -254,6 +254,18 @@ export function calcCalories(steps, weightKg = 70, heightCm = 170, ageYears = 30
   };
 }
 
+// Calorías por entrenamiento de gym (pesas, esfuerzo moderado ≈ MET 5.0),
+// aplicando el mismo factor de edad en Home y Perfil (única fuente de verdad
+// para que ambas pantallas siempre muestren el mismo número).
+export function calcGymCalories(weightKg, minutes, ageYears = 30) {
+  if (!minutes || minutes <= 0) return 0;
+  const kg   = weightKg > 0 ? weightKg : 70;
+  const edad = ageYears > 0 ? ageYears : 30;
+  // Metabolismo baja ~0.3%/año desde los 30 — mismo ajuste que ya existía en Perfil.
+  const ageFactor = Math.max(0.88, Math.min(1.10, 1 + (30 - Math.max(15, Math.min(70, edad))) * 0.003));
+  return Math.round(5.0 * kg * minutes / 60 * ageFactor);
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 export async function loadStepData() {

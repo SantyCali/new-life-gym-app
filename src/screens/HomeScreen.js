@@ -31,7 +31,7 @@ import { subscribeToClientRoutine } from '../services/routineService';
 import { subscribeToAnnouncement } from '../services/announcementService';
 import { MUSCLE_GROUPS } from '../constants/exercises';
 import { useStepContext } from '../context/StepContext';
-import { calcCalories, computeAge } from '../services/stepService';
+import { calcCalories, calcGymCalories, computeAge } from '../services/stepService';
 import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
 import { XP_GYM_VISIT } from '../services/gamificationService';
@@ -47,7 +47,7 @@ export default function HomeScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, isTrainer } = useAuth();
   const { profile } = useUserProfile();
-  const { steps: realSteps, calories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading } = useStepContext();
+  const { steps: realSteps, totalCalories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading } = useStepContext();
   const { activeCount: gymCount } = useGymCheckins();
 
   const weightKgHome = profile?.peso   ? Number(profile.peso)   : 70;
@@ -167,7 +167,7 @@ export default function HomeScreen({ navigation }) {
   const displayWalkM   = displayWalkMin % 60;
   const walkLabel      = displayWalkH > 0 ? `${displayWalkH}h ${displayWalkM}m` : `${displayWalkM}m`;
   const baseCalories = isHistoryMode
-    ? calcCalories(safeSteps, weightKgHome, heightCmHome, ageYearsHome, profile?.sexo).active
+    ? calcCalories(safeSteps, weightKgHome, heightCmHome, ageYearsHome, profile?.sexo).total
     : (Number.isFinite(realCalories) ? realCalories : 0);
 
   const stepPercent = displayPercent;
@@ -233,7 +233,7 @@ export default function HomeScreen({ navigation }) {
       : 0;
   }, [isHistoryMode, isAtGym, profile?.gymTodayDate, profile?.gymTodayMinutes]);
 
-  const displayCalories = baseCalories + (gymMinHoy > 0 ? Math.round(5.0 * weightKgHome * gymMinHoy / 60) : 0);
+  const displayCalories = baseCalories + calcGymCalories(weightKgHome, gymMinHoy, ageYearsHome);
 
   const [routine, setRoutine] = useState(null);
   useEffect(() => {

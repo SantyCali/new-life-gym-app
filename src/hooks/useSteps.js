@@ -19,6 +19,7 @@ import {
   syncStepsWithFirebase,
   saveStepsToFirebase,
 } from '../services/stepsFirebaseService';
+import { registerBackgroundStepsSync } from '../services/backgroundStepsSync';
 
 export default function useSteps(uid) {
   const [steps, setSteps]         = useState(0);
@@ -128,6 +129,7 @@ export default function useSteps(uid) {
         setAvailable(true);
 
         await startNativeStepService();
+        registerBackgroundStepsSync().catch(() => {});
 
         // Leer pasos locales y sincronizar con Firebase al arrancar
         const raw = await getNativeSteps();

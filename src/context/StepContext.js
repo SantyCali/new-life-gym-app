@@ -10,11 +10,12 @@ import {
   calcCalories, calcDistanceKm, computeAge, todayDateString, localDateString, openHealthConnectInstall, getStepsForDate,
 } from '../services/stepService';
 import {
-  awardXPAndCoins, checkAndAwardGymReward, updateStreak,
+  awardXPAndCoins, checkAndAwardGymReward, updateStreak, resetStreakIfBroken,
   XP_PER_1K_STEPS, XP_GOAL_BONUS,
   markGymRewardPending, clearGymRewardPending,
 } from '../services/gamificationService';
 import { subscribeToUserPresence } from '../services/gymService';
+import { flushPendingHistorySync } from '../services/backgroundStepsSync';
 import { stepMilestones } from '../constants/mockData';
 
 const DEFAULT_GOAL = 10000;
@@ -51,6 +52,19 @@ export function StepProvider({ children }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.stepsDate]);
+
+  // ── Flush del día pendiente que guardó el servicio nativo ────────────────────
+  // Si el usuario no abrió la app un día entero (y la tarea en background no
+  // llegó a correr antes de la medianoche), el total final de ese día queda
+  // guardado aparte en el servicio nativo — ver stashPendingSync en
+  // StepCounterService.kt. Al abrir la app, esta es la vía más confiable para
+  // recuperarlo (no depende de que WorkManager decida ejecutar la tarea).
+  const hasFlushedPendingRef = useRef(false);
+  useEffect(() => {
+    if (!user?.uid || hasFlushedPendingRef.current) return;
+    hasFlushedPendingRef.current = true;
+    flushPendingHistorySync(user.uid);
+  }, [user?.uid]);
 
   // ── Backfill histórico: consulta CMPedometer / HC para los últimos 6 días ──
   // Corre una vez por sesión cuando el pedómetro ya está listo.
@@ -209,13 +223,19 @@ export function StepProvider({ children }) {
   // ── Gamification: streak ──────────────────────────────────────────────────────
   // La racha solo debe sumar el día de hoy cuando se alcanza el objetivo diario
   // real del usuario (profile.dailyStepGoal) — no un umbral fijo arbitrario.
+  // Si todavía no se llegó al objetivo hoy, resetStreakIfBroken corta la racha
+  // en cuanto detecta que ya pasó un día entero sin lograrlo (en vez de dejarla
+  // "trabada" en el último valor hasta la próxima vez que sí se cumpla).
   useEffect(() => {
     if (!user?.uid || !profile) return;
-    const streakGoal = profile.dailyStepGoal ?? DEFAULT_GOAL;
-    if (steps < streakGoal) return;
     const today = todayDateString();
     if (profile.lastActiveDate === today) return;
-    updateStreak(user.uid, profile.racha ?? 0, profile.lastActiveDate ?? null);
+    const streakGoal = profile.dailyStepGoal ?? DEFAULT_GOAL;
+    if (steps >= streakGoal) {
+      updateStreak(user.uid, profile.racha ?? 0, profile.lastActiveDate ?? null);
+    } else {
+      resetStreakIfBroken(user.uid, profile.racha ?? 0, profile.lastActiveDate ?? null);
+    }
   }, [steps, user?.uid, profile]);
 
   // ── Gamification: gym presence reward ────────────────────────────────────────

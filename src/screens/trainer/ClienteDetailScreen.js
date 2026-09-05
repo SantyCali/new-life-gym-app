@@ -9,6 +9,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { typography, spacing, radius } from '../../theme';
 import { getClientRoutine } from '../../services/routineService';
 import { MUSCLE_GROUPS } from '../../constants/exercises';
+import { xpToNextLevel } from '../../services/gamificationService';
 
 const OBJETIVO_LABELS = {
   perder_peso:    'Perder peso',
@@ -43,6 +44,11 @@ export default function ClienteDetailScreen({ route, navigation }) {
 
   const edad = calcAge(cliente.fechaNacimiento);
 
+  const nivelJuego = cliente.nivelJuego ?? 1;
+  const xp         = cliente.xp ?? 0;
+  const xpRequired = xpToNextLevel(nivelJuego);
+  const xpPercent  = xpRequired > 0 ? Math.min(Math.round((xp / xpRequired) * 100), 100) : 0;
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
 
@@ -59,13 +65,18 @@ export default function ClienteDetailScreen({ route, navigation }) {
 
         {/* Profile card */}
         <View style={styles.profileCard}>
-          {photoUri ? (
-            <Image source={{ uri: photoUri }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarText}>{initials}</Text>
+          <View style={styles.avatarBox}>
+            {photoUri ? (
+              <Image source={{ uri: photoUri }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <Text style={styles.avatarText}>{initials}</Text>
+              </View>
+            )}
+            <View style={styles.levelBadge}>
+              <Text style={styles.levelBadgeText}>{nivelJuego}</Text>
             </View>
-          )}
+          </View>
           <Text style={styles.nombre}>
             {cliente.nombre ?? ''} {cliente.apellido ?? ''}
           </Text>
@@ -79,15 +90,26 @@ export default function ClienteDetailScreen({ route, navigation }) {
             <View style={styles.statDivider} />
             <Stat label="Altura"  value={cliente.altura ? `${cliente.altura} cm` : '—'} colors={colors} styles={styles} />
           </View>
+
+          {/* XP Bar */}
+          <View style={styles.xpSection}>
+            <View style={styles.xpHeader}>
+              <Text style={styles.xpLabel}>Nivel {nivelJuego}</Text>
+              <Text style={styles.xpValue}>
+                {xp.toLocaleString('es-AR')} / {xpRequired.toLocaleString('es-AR')} XP
+              </Text>
+              <Text style={styles.xpLabel}>Nivel {nivelJuego + 1}</Text>
+            </View>
+            <View style={styles.xpTrack}>
+              <View style={[styles.xpFill, { width: `${xpPercent}%` }]} />
+            </View>
+          </View>
         </View>
 
         {/* Info grid */}
         <View style={styles.infoGrid}>
           <InfoRow icon="trophy-outline"   label="Objetivo"
             value={OBJETIVO_LABELS[cliente.objetivo] ?? cliente.objetivo ?? '—'}
-            colors={colors} styles={styles} />
-          <InfoRow icon="star-outline"     label="Nivel"
-            value={`Nivel ${cliente.nivelJuego ?? 1}`}
             colors={colors} styles={styles} />
           <InfoRow icon="calendar-outline" label="Ingresó"
             value={formatDate(cliente.fechaRegistro)}
@@ -241,20 +263,34 @@ function makeStyles(colors) {
       alignItems: 'center',
       marginBottom: spacing.lg,
     },
+    avatarBox: {
+      marginBottom: spacing.md,
+    },
     avatar: {
       width: 90, height: 90, borderRadius: 45,
       borderWidth: 3, borderColor: colors.primary,
-      marginBottom: spacing.md,
     },
     avatarFallback: {
       width: 90, height: 90, borderRadius: 45,
       backgroundColor: colors.primaryDim12,
       borderWidth: 3, borderColor: colors.primary,
       alignItems: 'center', justifyContent: 'center',
-      marginBottom: spacing.md,
     },
     avatarText: {
       fontSize: 32, fontWeight: typography.weights.black, color: colors.primary,
+    },
+    levelBadge: {
+      position: 'absolute',
+      bottom: -2, right: -2,
+      width: 28, height: 28, borderRadius: 14,
+      backgroundColor: colors.primary,
+      alignItems: 'center', justifyContent: 'center',
+      borderWidth: 2, borderColor: colors.surfaceContainer,
+    },
+    levelBadgeText: {
+      fontSize: typography.sizes.sm,
+      fontWeight: typography.weights.black,
+      color: colors.textInverse,
     },
     nombre: {
       fontSize: typography.sizes.xl,
@@ -282,6 +318,27 @@ function makeStyles(colors) {
       textTransform: 'uppercase', letterSpacing: 0.5,
     },
     statDivider: { width: 1, height: 32, backgroundColor: colors.border },
+
+    // XP bar
+    xpSection: { width: '100%', marginTop: spacing.lg },
+    xpHeader: {
+      flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.sm,
+    },
+    xpLabel: {
+      fontSize: typography.sizes.xs, color: colors.textSecondary,
+      fontWeight: typography.weights.medium,
+    },
+    xpValue: {
+      fontSize: typography.sizes.xs, color: colors.primary,
+      fontWeight: typography.weights.bold,
+    },
+    xpTrack: {
+      height: 6, backgroundColor: colors.surfaceActive,
+      borderRadius: radius.full, overflow: 'hidden',
+    },
+    xpFill: {
+      height: '100%', backgroundColor: colors.primary, borderRadius: radius.full,
+    },
 
     // Info grid
     infoGrid: {

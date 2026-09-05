@@ -38,25 +38,6 @@ function withKotlinFiles(config) {
         }
       }
 
-      // Copiar recursos Android (layout y drawable para la notificación custom)
-      const layoutDest   = path.join(platformRoot, 'app', 'src', 'main', 'res', 'layout');
-      const drawableDest = path.join(platformRoot, 'app', 'src', 'main', 'res', 'drawable');
-      if (!fs.existsSync(layoutDest))   fs.mkdirSync(layoutDest,   { recursive: true });
-      if (!fs.existsSync(drawableDest)) fs.mkdirSync(drawableDest, { recursive: true });
-
-      const XML_FILES = [
-        { src: 'notification_steps.xml', dest: path.join(layoutDest,   'notification_steps.xml') },
-        { src: 'notif_ring.xml',         dest: path.join(drawableDest, 'notif_ring.xml') },
-      ];
-      for (const f of XML_FILES) {
-        const src = path.join(projectRoot, 'modules', f.src);
-        if (fs.existsSync(src)) {
-          fs.copyFileSync(src, f.dest);
-        } else {
-          console.warn(`[withStepCounter] No se encontró: ${src}`);
-        }
-      }
-
       return config;
     },
   ]);

@@ -25,10 +25,24 @@ export async function stopNativeStepService() {
 // silent=false → canal IMPORTANCE_LOW (visible normal)
 export async function setNotificationSilent(silent) {
   if (!nativeServiceAvailable) return;
-  try { await NLGStepCounter.setNotificationSilent(silent); } catch {}
+  await NLGStepCounter.setNotificationSilent(silent);
 }
 
 export async function getNotificationSilent() {
   if (!nativeServiceAvailable) return false;
   try { return await NLGStepCounter.getNotificationSilent(); } catch { return false; }
+}
+
+// Total final de un día ya cerrado que el servicio nativo contó pero que
+// todavía nadie subió a Firestore (p. ej. el usuario no abrió la app ese día
+// y la tarea en background no llegó a correr antes de la medianoche).
+// { date: 'YYYY-MM-DD', steps: number } o null si no hay nada pendiente.
+export async function getPendingHistorySync() {
+  if (!nativeServiceAvailable) return null;
+  try { return await NLGStepCounter.getPendingHistorySync(); } catch { return null; }
+}
+
+export async function clearPendingHistorySync() {
+  if (!nativeServiceAvailable) return;
+  try { await NLGStepCounter.clearPendingHistorySync(); } catch {}
 }

@@ -43,7 +43,7 @@ import ProgressRing from '../components/ui/ProgressRing';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import { updateUserProfile, addWeightEntry, deleteWeightEntry, fetchWeeklyStepHistory, fetchWeeklyGymHistory } from '../services/userService';
-import { calcCalories } from '../services/stepService';
+import { calcCalories, calcGymCalories } from '../services/stepService';
 import { subscribeToBodyWeightHistory } from '../services/progressService';
 import { getSocioByDni } from '../services/gymService';
 import { awardXPAndCoins } from '../services/gamificationService'; // TEMP TEST
@@ -77,12 +77,10 @@ function calcCalorias(pesoKg, alturaCm, edadAnios, stepsHoy, gymMinutos, sexo) {
   const kg   = pesoKg    > 0 ? pesoKg    : 70;
   const edad = edadAnios > 0 ? edadAnios : 30;
   const gym  = gymMinutos > 0 ? gymMinutos : 0;
-  // Calorías por caminar: misma fórmula (MET) que usa el Home, vía stepService.
+  // Calorías por caminar y por gym: misma fórmula (stepService) que usa el Home,
+  // para que ambas pantallas muestren siempre el mismo número.
   const { total: calPasos } = calcCalories(stepsHoy, kg, alturaCm, edad, sexo);
-  // Gym: factor de edad propio (metabolismo baja ~0.3%/año desde los 30) + MET 5.0
-  // (entrenamiento moderado con pesas) — sin cambios respecto a la lógica anterior.
-  const ageFactorGym = Math.max(0.88, Math.min(1.10, 1 + (30 - Math.max(15, Math.min(70, edad))) * 0.003));
-  const calGym = Math.round(5.0 * kg * gym / 60 * ageFactorGym);
+  const calGym = calcGymCalories(kg, gym, edad);
   return { calPasos, calGym, total: calPasos + calGym };
 }
 
