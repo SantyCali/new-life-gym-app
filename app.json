@@ -21,13 +21,14 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.newlife.app",
+      "bundleIdentifier": "com.newlifegymmerlo",
       "icon": {
         "any": "./assets/icon-light.png",
         "dark": "./assets/icon-dark.png"
       },
       "infoPlist": {
-        "CADisableMinimumFrameDurationOnPhone": true
+        "CADisableMinimumFrameDurationOnPhone": true,
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
