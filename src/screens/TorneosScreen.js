@@ -11,16 +11,17 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
 import useAuth from '../hooks/useAuth';
-import { subscribeTorneosForUser, createTorneo, tiempoRestante } from '../services/torneoService';
+import { subscribeTorneosForUser, createTorneo, tiempoRestante, torneoTerminado } from '../services/torneoService';
 
 export default function TorneosScreen({ navigation }) {
   const { theme: { colors } } = useTheme();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [torneos, setTorneos] = useState([]);
@@ -62,7 +63,7 @@ export default function TorneosScreen({ navigation }) {
       <View style={styles.cardBody}>
         <View style={styles.cardRow}>
           <Text style={[styles.cardNombre, { color: colors.text }]} numberOfLines={1}>{item.nombre}</Text>
-          {item.activo && (
+          {!torneoTerminado(item) && (
             <View style={[styles.activoBadge, { backgroundColor: '#22C55E20', borderColor: '#22C55E40' }]}>
               <Text style={styles.activoText}>Activo</Text>
             </View>
@@ -140,6 +141,8 @@ export default function TorneosScreen({ navigation }) {
         transparent
         animationType="slide"
         onRequestClose={() => setModalVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
         <TouchableOpacity
           style={styles.overlay}
@@ -150,7 +153,7 @@ export default function TorneosScreen({ navigation }) {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.sheetWrapper}
         >
-          <View style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }, Platform.OS === 'android' && { paddingBottom: spacing['3xl'] + insets.bottom }]}>
             <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
             <Text style={[styles.sheetTitle, { color: colors.text }]}>Nuevo torneo</Text>
             <Text style={[styles.sheetLabel, { color: colors.textSecondary }]}>Nombre del torneo</Text>

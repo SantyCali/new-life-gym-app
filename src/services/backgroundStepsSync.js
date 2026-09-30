@@ -1,44 +1,90 @@
-// Tarea única en background que cubre todo lo que antes solo pasaba con la
-// app abierta: sincroniza los pasos a Firestore (para que la pantalla de
-// progreso del entrenador no dependa de que el cliente abra la app) y además
-// detecta presencia en el gym (ver checkGymPresenceInBackground) para
-// acreditar minutos/calorías/XP aunque el usuario nunca haya abierto la app
-// durante la visita. El nombre del archivo quedó del sync de pasos original;
-// el ID de la tarea (BACKGROUND_STEPS_TASK) ya está registrado en dispositivos
-// existentes así que no se renombra.
+// Tarea en segundo plano que hace, con la app cerrada, todo lo que antes solo
+// pasaba con la app abierta: subir los pasos, acreditar sus puntos (que son los
+// que cuentan para los torneos), cortar la racha si se rompió y, en Android,
+// detectar la presencia en el gym (ver checkGymPresenceInBackground).
 //
-// Android usa WorkManager por debajo (vía expo-background-task): el sistema
-// operativo decide cuándo correr esto realmente, con un mínimo de 15 minutos
-// entre ejecuciones. En fabricantes agresivos con batería (MIUI incluido) el
-// usuario puede necesitar habilitar "inicio automático"/sin restricciones de
-// batería para que el sistema lo deje correr con regularidad.
+// Quién decide cuándo corre es el sistema operativo:
+// - Android (WorkManager): cada 15 min como mínimo. En fabricantes agresivos
+//   con la batería (Xiaomi/MIUI, por ejemplo) hay que dejar la app "sin
+//   restricciones" para que corra con regularidad.
+// - iOS (BGTaskScheduler): mucho menos seguido y sin horario garantizado,
+//   típicamente de noche o mientras se carga el celular. Como el sensor del
+//   iPhone guarda 7 días de pasos, cada vez que corre recupera todos los días
+//   que falten, así que los puntos no se pierden aunque tarde.
+//
+// El nombre del archivo y el ID de la tarea quedaron del sync de pasos original;
+// el ID ya está registrado en dispositivos existentes, así que no se renombra.
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundTask from 'expo-background-task';
 import { Platform } from 'react-native';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import {
-  getNativeSteps, nativeServiceAvailable,
+  getNativeSteps, nativeServiceAvailable, getNativeStepHistory,
   getPendingHistorySync, clearPendingHistorySync,
 } from './nativeStepService';
-import { todayDateString } from './stepService';
-import { saveStepsToFirebase } from './stepsFirebaseService';
+import {
+  todayDateString, localDateString, getStepsForDate, getStepsSinceMidnight, isPedometerAvailable,
+} from './stepService';
+import { acreditarDias } from './stepRewardsService';
+import { cortarRachaSiSeRompio } from './gamificationService';
+import { actualizarMisTorneos } from './torneoService';
+import { revisarAvisosDeTorneos } from './avisoTorneoService';
 import { checkGymPresenceInBackground } from './backgroundGymSync';
+import { programarAvisosDeCuota } from './avisoCuotaService';
+import { leerPrivado } from './perfilPrivadoService';
+import { doc, getDoc } from 'firebase/firestore';
 
 export const BACKGROUND_STEPS_TASK = 'nlg-background-steps-sync';
 
-// Sube el total de un día ya cerrado que el servicio nativo guardó aparte
-// porque nadie llegó a subirlo antes de que cambiara la fecha (ver
-// StepCounterService.kt: stashPendingSync). Se llama tanto acá (tarea en
-// background) como al abrir la app (StepContext), lo que ocurra primero.
-export async function flushPendingHistorySync(uid) {
-  if (!uid || !nativeServiceAvailable) return;
-  try {
-    const pending = await getPendingHistorySync();
-    if (!pending?.date || !(pending.steps > 0)) return;
-    await saveStepsToFirebase(uid, pending.date, pending.steps);
+// Días que se revisan hacia atrás. El sensor del iPhone guarda 7 días; en
+// Android el servicio nativo guarda 14.
+const DIAS_ATRAS = 6;
+
+// Pasos de hoy y de los días anteriores disponibles en este celular, como
+// { 'YYYY-MM-DD': pasos }. Lo usan la tarea en segundo plano y StepContext al
+// abrir la app, así las dos vías acreditan exactamente lo mismo.
+export async function leerPasosDelCelular() {
+  const hoy = todayDateString();
+  const pasos = {};
+
+  if (Platform.OS === 'android' && nativeServiceAvailable) {
+    Object.assign(pasos, await getNativeStepHistory());
+    const pendiente = await getPendingHistorySync();
+    if (pendiente?.date && pendiente.steps > (pasos[pendiente.date] ?? 0)) {
+      pasos[pendiente.date] = pendiente.steps;
+    }
+    pasos[hoy] = await getNativeSteps();
+  } else if (Platform.OS === 'ios' && (await isPedometerAvailable())) {
+    for (let i = DIAS_ATRAS; i >= 1; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const n = await getStepsForDate(d);
+      if (n > 0) pasos[localDateString(d)] = n;
+    }
+    try { pasos[hoy] = await getStepsSinceMidnight(); } catch {}
+  }
+
+  for (const f of Object.keys(pasos)) if (!(pasos[f] > 0)) delete pasos[f];
+  return pasos;
+}
+
+// Sube los pasos del celular y acredita sus puntos. Idempotente: se puede
+// llamar las veces que sea (ver stepRewardsService).
+export async function sincronizarPasosYPuntos(uid) {
+  if (!uid) return;
+  const pasos = await leerPasosDelCelular();
+  await acreditarDias(uid, pasos);
+
+  // El slot viejo de Android ya quedó dentro del historial acreditado.
+  if (Platform.OS === 'android' && nativeServiceAvailable) {
     await clearPendingHistorySync();
-  } catch {}
+  }
+  await cortarRachaSiSeRompio(uid);
+  // Foto de sus puntos en los torneos en curso (ver torneoService).
+  await actualizarMisTorneos(uid).catch(() => {});
+  // Avisos de torneos (te sumaron / terminó), también con la app cerrada.
+  await revisarAvisosDeTorneos(uid).catch(() => {});
 }
 
 // La sesión de Firebase Auth se restaura de forma asíncrona desde AsyncStorage
@@ -65,24 +111,23 @@ function waitForAuthUser(timeoutMs = 5000) {
 // que el sistema operativo pueda invocar la tarea aunque la app esté cerrada.
 TaskManager.defineTask(BACKGROUND_STEPS_TASK, async () => {
   try {
-    if (Platform.OS !== 'android') {
-      return BackgroundTask.BackgroundTaskResult.Success;
-    }
     const user = await waitForAuthUser();
     if (!user?.uid) return BackgroundTask.BackgroundTaskResult.Success;
 
-    // Presencia en el gym (entrada/salida + XP + minutos) — no depende del
-    // módulo nativo de pasos, así que corre siempre que haya usuario.
-    await checkGymPresenceInBackground(user.uid);
-
-    if (nativeServiceAvailable) {
-      await flushPendingHistorySync(user.uid);
-
-      const steps = await getNativeSteps();
-      if (steps > 0) {
-        await saveStepsToFirebase(user.uid, todayDateString(), steps);
-      }
+    // Presencia en el gym (entrada/salida + XP + minutos): solo Android, que
+    // es donde la tarea corre con la frecuencia suficiente para detectarla.
+    if (Platform.OS === 'android') {
+      await checkGymPresenceInBackground(user.uid);
     }
+
+    await sincronizarPasosYPuntos(user.uid);
+
+    // Aviso de cuota: si renovó sin abrir la app, se corre a la fecha nueva.
+    try {
+      const pub = await getDoc(doc(db, 'users', user.uid));
+      const { gymDni } = await leerPrivado(user.uid, pub.exists() ? pub.data() : {});
+      await programarAvisosDeCuota(gymDni);
+    } catch {}
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;
@@ -91,8 +136,9 @@ TaskManager.defineTask(BACKGROUND_STEPS_TASK, async () => {
 
 // Se llama una vez al iniciar la app (ver useSteps.js) — idempotente.
 export async function registerBackgroundStepsSync() {
-  if (Platform.OS !== 'android') return;
   try {
+    const status = await BackgroundTask.getStatusAsync();
+    if (status !== BackgroundTask.BackgroundTaskStatus.Available) return;
     const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_STEPS_TASK);
     if (!isRegistered) {
       await BackgroundTask.registerTaskAsync(BACKGROUND_STEPS_TASK, { minimumInterval: 15 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { View, StyleSheet, Animated, Easing } from 'react-native';
-import Svg, { Circle, G } from 'react-native-svg';
+import { View, StyleSheet, Animated, Easing, Platform } from 'react-native';
+import Svg, { Circle, G, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../../context/ThemeContext';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -48,6 +48,22 @@ export default function ProgressRing({
   return (
     <View style={[{ width: size, height: size }, styles.glowWrap, { shadowColor: arcColor }]}>
       <Svg width={size} height={size}>
+        {/* Resplandor de fondo. En iOS lo hace la sombra de color; Android no
+            dibuja sombras de color, así que ahí va un degradé radial. */}
+        {Platform.OS === 'android' && (
+          <>
+            <Defs>
+              <RadialGradient id="haloAnillo" cx="50%" cy="50%" r="50%">
+                <Stop offset="0"    stopColor={arcColor} stopOpacity={0.03} />
+                <Stop offset="0.55" stopColor={arcColor} stopOpacity={0.06} />
+                <Stop offset="0.71" stopColor={arcColor} stopOpacity={0.13} />
+                <Stop offset="0.86" stopColor={arcColor} stopOpacity={0.05} />
+                <Stop offset="1"    stopColor={arcColor} stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            <Circle cx={cx} cy={cy} r={cx} fill="url(#haloAnillo)" />
+          </>
+        )}
         <G rotation="-90" origin={`${cx}, ${cy}`}>
           {/* Track */}
           <Circle cx={cx} cy={cy} r={radius} stroke={trackFill} strokeWidth={strokeWidth} fill="none" />

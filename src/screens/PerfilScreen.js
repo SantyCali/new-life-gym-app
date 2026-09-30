@@ -16,6 +16,7 @@ import {
   UIManager,
   Platform,
 } from 'react-native';
+import { useEspacioBarra } from '../navigation/PremiumTabBar';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -43,10 +44,12 @@ import ProgressRing from '../components/ui/ProgressRing';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import { updateUserProfile, addWeightEntry, deleteWeightEntry, fetchWeeklyStepHistory, fetchWeeklyGymHistory } from '../services/userService';
-import { calcCalories, calcGymCalories } from '../services/stepService';
+import { calcCalories, calcGymCalories, localDateString } from '../services/stepService';
 import { subscribeToBodyWeightHistory } from '../services/progressService';
 import { getSocioByDni } from '../services/gymService';
-import { awardXPAndCoins } from '../services/gamificationService'; // TEMP TEST
+import { vincularDni, desvincularDni } from '../services/perfilPrivadoService';
+import { awardXPAndCoins } from '../services/gamificationService';
+import { deleteField } from 'firebase/firestore';
 import { useStepContext } from '../context/StepContext';
 import { useGymEvents } from '../context/GymEventsContext';
 
@@ -97,6 +100,8 @@ function calcEdad(fechaNacimiento) {
 }
 
 export default function PerfilScreen({ navigation }) {
+  // Espacio al final para que la barra flotante no tape lo último.
+  const espacioBarra = useEspacioBarra();
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user: authUser, isTester } = useAuth();
@@ -155,7 +160,7 @@ export default function PerfilScreen({ navigation }) {
 
   const isHistoryMode  = dayOffset < 0;
   const selectedDate   = getOffsetDate(dayOffset);
-  const selectedDateKey = selectedDate.toISOString().split('T')[0];
+  const selectedDateKey = localDateString(selectedDate); // local, no UTC
   // Fecha de "hoy" en LOCAL (no UTC) — es el mismo cálculo que ya usaba esta
   // pantalla para comparar contra gymTodayDate. Se mantiene aparte de
   // selectedDateKey (que es la misma clave UTC-based que ya usa Home para
@@ -319,7 +324,7 @@ export default function PerfilScreen({ navigation }) {
       />
 
       {/* ── Modal foto en grande ── */}
-      <Modal visible={photoPreview} transparent animationType="fade" onRequestClose={() => setPhotoPreview(false)}>
+      <Modal visible={photoPreview} transparent animationType="fade" onRequestClose={() => setPhotoPreview(false)} statusBarTranslucent navigationBarTranslucent>
         <TouchableOpacity
           style={{ flex: 1, backgroundColor: '#000000CC', alignItems: 'center', justifyContent: 'center' }}
           activeOpacity={1}
@@ -349,7 +354,7 @@ export default function PerfilScreen({ navigation }) {
       <ScrollView
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: espacioBarra }]}
         onScroll={(e) => { scrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
         scrollEventThrottle={100}
       >
@@ -418,11 +423,12 @@ export default function PerfilScreen({ navigation }) {
                   if (!existing) await AsyncStorage.setItem('tester_xp_snap', JSON.stringify({
                     xp: profile.xp ?? 0,
                     xpTotal: profile.xpTotal ?? 0,
+                        xpExtra: profile.xpExtra ?? 0,
                     nivelJuego: profile.nivelJuego ?? 1,
                     gymVisitCount: profile.gymVisitCount ?? 0,
-                    logrosCompletados: profile.logrosCompletados ?? [],
+                    logros: profile.logros ?? {},
                   }));
-                  await awardXPAndCoins(authUser.uid, 400);
+                  await awardXPAndCoins(authUser.uid, 400, { extra: true });
                 }}
                 style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
               >
@@ -433,9 +439,9 @@ export default function PerfilScreen({ navigation }) {
                   if (!authUser?.uid) return;
                   const raw = await AsyncStorage.getItem('tester_xp_snap');
                   if (raw) {
-                    await updateUserProfile(authUser.uid, JSON.parse(raw));
+                    await updateUserProfile(authUser.uid, { ...JSON.parse(raw), sinAutoReparar: deleteField() });
                   } else {
-                    await updateUserProfile(authUser.uid, { nivelJuego: 1, xp: 0, xpTotal: 0, gymVisitCount: 0, logrosCompletados: [] });
+                    await updateUserProfile(authUser.uid, { nivelJuego: 1, xp: 0, xpTotal: 0, xpExtra: 0, gymVisitCount: 0, logros: {}, logrosCompletados: [], sinAutoReparar: true });
                   }
                 }}
                 style={{ backgroundColor: '#DC2626', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
@@ -576,6 +582,7 @@ function formatVen(ts) {
 }
 
 function GymTab({ uid, profile }) {
+  const { isTrainer } = useAuth();
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -607,7 +614,17 @@ function GymTab({ uid, profile }) {
         Alert.alert('No encontrado', 'No hay ningún socio con ese DNI en el gimnasio.');
         return;
       }
-      await updateUserProfile(uid, { gymDni: trimmed });
+      // Cada DNI es de una sola cuenta: así nadie ve los ingresos ni la cuota
+      // de otro vinculando su DNI.
+      const r = await vincularDni(uid, trimmed, { dniRegistro: profile?.dni, esEntrenador: isTrainer });
+      if (r === 'otro-dni') {
+        Alert.alert('DNI distinto', `Tiene que ser el DNI con el que te registraste${profile?.dni ? ` (${profile.dni})` : ''}. Si está mal, avisale al gimnasio.`);
+        return;
+      }
+      if (r === 'ocupado') {
+        Alert.alert('DNI ya vinculado', 'Ese DNI ya está vinculado a otra cuenta. Si es tuyo, avisale al gimnasio.');
+        return;
+      }
       setSocioData(socio);
       setDniInput('');
     } catch {
@@ -624,7 +641,7 @@ function GymTab({ uid, profile }) {
         text: 'Desvincular',
         style: 'destructive',
         onPress: async () => {
-          await updateUserProfile(uid, { gymDni: null });
+          await desvincularDni(uid).catch(() => {});
           setSocioData(null);
         },
       },
@@ -968,7 +985,7 @@ function PesoTab({ uid, currentPeso }) {
       )}
 
       {/* Modal registrar peso */}
-      <Modal visible={addVisible} transparent animationType="fade" onRequestClose={() => setAddVisible(false)}>
+      <Modal visible={addVisible} transparent animationType="fade" onRequestClose={() => setAddVisible(false)} statusBarTranslucent navigationBarTranslucent>
         <TouchableOpacity style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setAddVisible(false)}>
           <TouchableOpacity activeOpacity={1} style={{ width: '80%', backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.xl, borderWidth: 1, borderColor: colors.border }}>
             <Text style={{ color: colors.text, fontSize: typography.sizes.md, fontWeight: '700', marginBottom: spacing.lg }}>Registrar peso</Text>
@@ -1049,6 +1066,7 @@ function ProfilePhoto({ uri }) {
 
 function EditMedidasModal({ visible, onClose, uid, initialPeso, initialAltura, fechaNacimiento, edad }) {
   const { theme: { colors } } = useTheme();
+  const insets = useSafeAreaInsets();
   const editModalStyles = useMemo(() => makeEditModalStyles(colors), [colors]);
   const [peso,   setPeso]   = useState('');
   const [altura, setAltura] = useState('');
@@ -1082,9 +1100,9 @@ function EditMedidasModal({ visible, onClose, uid, initialPeso, initialAltura, f
   }
 
   return (
-    <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
+    <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={editModalStyles.backdrop} onPress={onClose} />
-      <View style={editModalStyles.sheet}>
+      <View style={[editModalStyles.sheet, Platform.OS === 'android' && { paddingBottom: 40 + insets.bottom }]}>
         <View style={editModalStyles.handle} />
         <Text style={editModalStyles.title}>Editar medidas</Text>
 
@@ -1173,7 +1191,7 @@ function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspect
   if (!visible) return null;
 
   return (
-    <Modal transparent animationType="none" visible={visible} onRequestClose={() => onClose()}>
+    <Modal transparent animationType="none" visible={visible} onRequestClose={() => onClose()} statusBarTranslucent navigationBarTranslucent>
       {/* Backdrop */}
       <Animated.View style={[drawerStyles.backdrop, backdropStyle]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => onClose()} />

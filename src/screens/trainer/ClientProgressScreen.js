@@ -283,7 +283,7 @@ export default function ClientProgressScreen({ route, navigation }) {
       )}
 
       {/* ── Detalle del día seleccionado (pasos / kcal / tiempo caminando) ── */}
-      <Modal visible={detailVisible} transparent animationType="fade" onRequestClose={() => setDetailVisible(false)}>
+      <Modal visible={detailVisible} transparent animationType="fade" onRequestClose={() => setDetailVisible(false)} statusBarTranslucent navigationBarTranslucent>
         <TouchableOpacity
           style={styles.detailOverlay}
           activeOpacity={1}

@@ -12,7 +12,7 @@ export const STEPS_FOR_STREAK = 5000;
 // XP needed to go from level N to N+1
 export function xpToNextLevel(level) { return Math.max(1, level) * 1000; }
 
-function applyXPGain(currentXP, currentLevel, xpGain) {
+export function applyXPGain(currentXP, currentLevel, xpGain) {
   let xp    = (currentXP ?? 0) + xpGain;
   let level = (currentLevel ?? 1);
   while (xp >= xpToNextLevel(level)) {
@@ -22,19 +22,28 @@ function applyXPGain(currentXP, currentLevel, xpGain) {
   return { xp: Math.max(0, xp), nivelJuego: level };
 }
 
-let _awarding = false;
-export async function awardXPAndCoins(uid, xpGain) {
-  if (!uid || !xpGain || _awarding) return;
-  _awarding = true;
+// En transacción: antes había un candado que DESCARTABA el premio si llegaba
+// otro mientras se procesaba el primero (p. ej. hito de 5K + puntos por mil
+// pasos en el mismo momento), y un leer-y-escribir sin transacción que podía
+// pisar puntos sumados desde otro lado. Ahora cada premio se aplica siempre.
+//
+// `extra: true` marca puntos que no salen de la actividad del usuario (premios
+// de logros, premio por ganar un torneo, botones de prueba). Suman al nivel
+// igual, pero se acumulan también en xpExtra para que los torneos los
+// descuenten: un torneo mide lo que cada uno caminó y entrenó, no los premios.
+export async function awardXPAndCoins(uid, xpGain, { extra = false } = {}) {
+  if (!uid || !xpGain) return;
   try {
-    const ref  = doc(db, 'users', uid);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return;
-    const { xp = 0, nivelJuego = 1 } = snap.data();
-    const updated = applyXPGain(xp, nivelJuego, xpGain);
-    await updateDoc(ref, { ...updated, xpTotal: increment(xpGain) });
+    const ref = doc(db, 'users', uid);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const { xp = 0, nivelJuego = 1 } = snap.data();
+      const upd = { ...applyXPGain(xp, nivelJuego, xpGain), xpTotal: increment(xpGain) };
+      if (extra) upd.xpExtra = increment(xpGain);
+      tx.update(ref, upd);
+    });
   } catch {}
-  finally { _awarding = false; }
 }
 
 // Otorga los XP de "asistencia al gym" una sola vez por día (por fecha, no por
@@ -61,6 +70,9 @@ export async function checkAndAwardGymReward(uid) {
     const updated = applyXPGain(xp, nivelJuego, XP_GYM_VISIT);
     tx.update(ref, {
       ...updated,
+      // Sin esto los 150 de la visita subían el nivel pero no el total, que
+      // es lo que miden los torneos y el logro de 1000 XP.
+      xpTotal:           increment(XP_GYM_VISIT),
       lastGymRewardDate: today,
       gymVisitCount:     increment(1),
     });
@@ -144,6 +156,18 @@ export async function updateStreak(uid, currentRacha, lastActiveDate) {
 // un día completo sin actividad (lastActiveDate no es hoy NI ayer, o sea que
 // ayer no se llegó al objetivo), la reinicia a 0 sin esperar a que el usuario
 // vuelva a cumplir el objetivo.
+// Igual que resetStreakIfBroken pero leyendo el perfil por su cuenta, para la
+// tarea en segundo plano (ahí no hay un perfil cargado en memoria).
+export async function cortarRachaSiSeRompio(uid) {
+  if (!uid) return;
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (!snap.exists()) return;
+    const { racha, lastActiveDate } = snap.data();
+    await resetStreakIfBroken(uid, racha, lastActiveDate);
+  } catch {}
+}
+
 export async function resetStreakIfBroken(uid, currentRacha, lastActiveDate) {
   if (!uid || !((currentRacha ?? 0) > 0)) return;
   const today = todayDateString();

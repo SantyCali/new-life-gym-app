@@ -4,13 +4,17 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { todayDateString } from './stepService';
+import { duenoDelDni } from './perfilPrivadoService';
 
 const COL = collection(db, 'ingresosActivos');
 export const ACTIVE_MS = 90 * 60 * 1000; // 1 h 30 min
-const ACTIVE_CUTOFF = () => Timestamp.fromMillis(Date.now() - ACTIVE_MS);
-
+// Ingresos desde la medianoche (o desde hace 90 min, si es más temprano):
+// alcanzan para los que están ahora y para el total del día.
 export function subscribeToGymCheckins(onData) {
-  const q = query(COL, where('fechaHora', '>', ACTIVE_CUTOFF()), orderBy('fechaHora', 'desc'));
+  const medianoche = new Date();
+  medianoche.setHours(0, 0, 0, 0);
+  const desde = Timestamp.fromMillis(Math.min(medianoche.getTime(), Date.now() - ACTIVE_MS));
+  const q = query(COL, where('fechaHora', '>', desde), orderBy('fechaHora', 'desc'));
   return onSnapshot(q,
     snap => onData(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
     err => console.error('[GymCheckins] Firestore error:', err.message, err.code)
@@ -114,7 +118,6 @@ export async function getAllSocios() {
 
 export async function getSociosQuotaStatus() {
   const snap = await getDocs(collection(db, 'socios'));
-  console.log('[gymService] socios en Firestore:', snap.docs.length);
   const now        = Date.now();
   const twoDaysMs  = 1  * 24 * 60 * 60 * 1000; // gracia: solo el día del vencimiento
   const fourDaysMs = 4  * 24 * 60 * 60 * 1000; // "se acerca" = vence en ≤4 días
@@ -180,13 +183,21 @@ export async function getCheckinAnalytics(days = 30) {
 }
 
 export async function findUserByDni(dni) {
-  const q = query(collection(db, 'users'), where('dni', '==', dni.trim()));
-  const snap = await getDocs(q);
-  if (snap.empty) return null;
-  const data = snap.docs[0].data();
+  const buscado = dni.trim();
+  let data = null;
+  const uid = await duenoDelDni(buscado).catch(() => null);
+  if (uid) {
+    const snap = await getDoc(doc(db, 'users', uid));
+    data = snap.exists() ? snap.data() : null;
+  } else {
+    // Cuentas que todavía no movieron sus datos personales.
+    const snap = await getDocs(query(collection(db, 'users'), where('dni', '==', buscado)));
+    data = snap.empty ? null : snap.docs[0].data();
+  }
+  if (!data) return null;
   return {
     nombre: [data.nombre, data.apellido].filter(Boolean).join(' '),
-    dni: data.dni,
+    dni: buscado,
   };
 }
 

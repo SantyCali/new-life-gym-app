@@ -42,6 +42,22 @@ export async function getPendingHistorySync() {
   try { return await NLGStepCounter.getPendingHistorySync(); } catch { return null; }
 }
 
+// Totales de los últimos días cerrados: { 'YYYY-MM-DD': pasos }. En builds
+// anteriores al historial el método no existe, y se cae al slot único
+// de getPendingHistorySync para no perder ese día.
+export async function getNativeStepHistory() {
+  if (!nativeServiceAvailable) return {};
+  try {
+    if (typeof NLGStepCounter.getStepHistory === 'function') {
+      return (await NLGStepCounter.getStepHistory()) ?? {};
+    }
+    const pending = await getPendingHistorySync();
+    return pending?.date && pending.steps > 0 ? { [pending.date]: pending.steps } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function clearPendingHistorySync() {
   if (!nativeServiceAvailable) return;
   try { await NLGStepCounter.clearPendingHistorySync(); } catch {}

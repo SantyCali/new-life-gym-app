@@ -12,12 +12,17 @@ import {
   markGymRewardPending, clearGymRewardPending, flushPendingGymReward,
 } from '../services/gamificationService';
 import { subscribeToAnnouncement } from '../services/announcementService';
-import { doc, setDoc, updateDoc, arrayRemove } from 'firebase/firestore';
+import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import GymCelebrationModal from '../components/ui/GymCelebrationModal';
 import LevelUpModal from '../components/ui/LevelUpModal';
 import LogroCompletadoModal from '../components/ui/LogroCompletadoModal';
 import { LOGROS_DEF } from '../constants/logros';
+import { migrarYRepararLogros, revisarLogros } from '../services/logrosService';
+import { moverDatosPrivados } from '../services/perfilPrivadoService';
+import { actualizarMisTorneos } from '../services/torneoService';
+import { suscribirAvisosDeCuota } from '../services/avisoCuotaService';
+import { suscribirAvisosDeTorneos } from '../services/avisoTorneoService';
 
 // Dynamic import — evita que expo-notifications se inicialice en Expo Go (SDK 53+)
 // y dispare el warning de push. Las notificaciones locales siguen funcionando.
@@ -56,8 +61,7 @@ export function GymEventsProvider({ children }) {
   const prevLevelRef         = useRef(null);
   const pendingAdvanceRef    = useRef(false);
   const logrosInitRef        = useRef(false);
-  const prevLogrosRef        = useRef(new Set());
-  const logrosResetTimers    = useRef({});
+  const prevLogrosRef        = useRef({});
   const gymEntryTimeRef      = useRef(null);
   const latestGymCheckinMsRef = useRef(0);
   const isAtGymRef           = useRef(false);
@@ -98,7 +102,7 @@ export function GymEventsProvider({ children }) {
               trigger: null,
             });
           } catch (e) {
-            console.log('[AnnNotif]', e.message);
+            if (__DEV__) console.warn('[AnnNotif]', e.message);
           }
         }
       });
@@ -270,34 +274,76 @@ export function GymEventsProvider({ children }) {
     prevLevelRef.current = level;
   }, [profile?.nivelJuego]);
 
-  // Logro completion detection — dispara el modal en TODOS los dispositivos via Firestore
+  // ── Logros ──────────────────────────────────────────────────────────────────
+  // Acá (y no en la pantalla de Retos) porque este contexto está siempre
+  // montado: el logro se cobra apenas se cumple, en cualquier pantalla.
+  // La primera vez migra el sistema viejo y repara lo que borraba (ver
+  // logrosService).
+  const migracionLogrosRef = useRef(false);
   useEffect(() => {
-    // Esperar que el profile esté cargado (no null) antes de inicializar,
-    // así el doble-fire null→datos no dispara el modal en cada recarga
+    if (!user?.uid || !profile || migracionLogrosRef.current) return;
+    migracionLogrosRef.current = true;
+    migrarYRepararLogros(user.uid).catch(() => { migracionLogrosRef.current = false; });
+    // Cuentas de la versión anterior: los datos personales pasan al documento
+    // privado (ver perfilPrivadoService).
+    moverDatosPrivados(user.uid).catch(() => {});
+  }, [user?.uid, profile]);
+
+  useEffect(() => {
+    if (!user?.uid || !profile?.logrosMigradoV2) return;
+    revisarLogros(user.uid, profile);
+  }, [user?.uid, profile]);
+
+  // Aviso de cuota por vencer: escucha su cuota en vivo; si el entrenador
+  // cambia la fecha, se reprograma y avisa en el momento si ya está cerca.
+  const hayPerfil = !!profile;
+  useEffect(() => {
+    if (!user?.uid || !hayPerfil) return;
+    return suscribirAvisosDeCuota(profile?.gymDni);
+  }, [user?.uid, hayPerfil, profile?.gymDni]);
+
+  // Avisos de torneos: "te sumaron a un torneo" y "terminó el torneo".
+  useEffect(() => {
+    if (!user?.uid) return;
+    return suscribirAvisosDeTorneos(user.uid);
+  }, [user?.uid]);
+
+  // Foto de los puntos en los torneos en curso, para que la tabla quede
+  // congelada al terminar (ver torneoService). Con la app abierta, cuando
+  // cambian los puntos o las visitas; como mucho una vez por minuto (el
+  // último cambio se manda igual al cumplirse el minuto).
+  const ultimaFotoRef = useRef(0);
+  useEffect(() => {
+    if (!user?.uid || profile?.xpTotal == null) return;
+    const espera = Math.max(0, 60 * 1000 - (Date.now() - ultimaFotoRef.current));
+    const t = setTimeout(() => {
+      ultimaFotoRef.current = Date.now();
+      actualizarMisTorneos(user.uid).catch(() => {});
+    }, espera);
+    return () => clearTimeout(t);
+  }, [user?.uid, profile?.xpTotal, profile?.xpExtra, profile?.gymVisitCount]);
+
+  // Modal de logro completado, en todos los celulares del usuario: salta
+  // cuando aparece un completadoEn nuevo en el perfil. El primer perfil que
+  // llega se toma como punto de partida, para no mostrar logros viejos al abrir.
+  useEffect(() => {
     if (!profile) return;
-    const completados = profile.logrosCompletados ?? [];
+    const actuales = {};
+    LOGROS_DEF.forEach((d) => { actuales[d.id] = profile.logros?.[d.id]?.completadoEn ?? null; });
     if (!logrosInitRef.current) {
       logrosInitRef.current = true;
-      prevLogrosRef.current = new Set(completados);
+      prevLogrosRef.current = actuales;
       return;
     }
-    const prevSet = prevLogrosRef.current;
-    const nuevos  = completados.filter(id => !prevSet.has(id));
-    prevLogrosRef.current = new Set(completados);
-    nuevos.forEach(id => {
-      const def = LOGROS_DEF.find(l => l.id === id);
-      if (!def) return;
-      setLogroData({ title: def.title, description: def.description, icon: def.icon, xp: def.xp });
-      // Auto-reset después de 5 minutos: quita el logro Y resetea el progreso a 0
-      clearTimeout(logrosResetTimers.current[id]);
-      logrosResetTimers.current[id] = setTimeout(async () => {
-        if (!user?.uid) return;
-        const update = { logrosCompletados: arrayRemove(id) };
-        if (def.resetField) update[def.resetField] = 0;
-        await updateDoc(doc(db, 'users', user.uid), update);
-      }, 5 * 60 * 1000);
+    const prev = prevLogrosRef.current;
+    prevLogrosRef.current = actuales;
+    LOGROS_DEF.forEach((def) => {
+      const t = actuales[def.id];
+      if (t && t !== prev[def.id]) {
+        setLogroData({ title: def.title, description: def.description, icon: def.icon, xp: def.xp });
+      }
     });
-  }, [profile?.logrosCompletados, profile]);
+  }, [profile]);
 
   return (
     <GymEventsCtx.Provider value={{

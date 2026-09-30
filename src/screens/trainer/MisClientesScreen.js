@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useTheme } from '../../context/ThemeContext';
@@ -12,6 +13,7 @@ import { typography, spacing, radius } from '../../theme';
 import useAuth from '../../hooks/useAuth';
 import useUserProfile from '../../hooks/useUserProfile';
 import { subscribeToAnnouncement } from '../../services/announcementService';
+import { juntarPerfil, leerPrivadoDeTodos } from '../../services/perfilPrivadoService';
 import AnnouncementEditSheet from '../../components/ui/AnnouncementEditSheet';
 
 export default function MisClientesScreen({ navigation }) {
@@ -28,9 +30,9 @@ export default function MisClientesScreen({ navigation }) {
   const [annModal, setAnnModal] = useState(false);
 
   useEffect(() => {
-    getDocs(collection(db, 'users'))
-      .then(snap => {
-        setAllClients(snap.docs.map(d => ({ uid: d.id, ...d.data() })));
+    Promise.all([getDocs(collection(db, 'users')), leerPrivadoDeTodos().catch(() => ({}))])
+      .then(([snap, privados]) => {
+        setAllClients(snap.docs.map(d => ({ uid: d.id, ...juntarPerfil(d.data(), privados[d.id]) })));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -55,11 +57,33 @@ export default function MisClientesScreen({ navigation }) {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.title}>Mis Clientes</Text>
-        <View style={{ width: 40 }} />
+        {/* Mismo ancho a los dos lados para que el título quede centrado */}
+        <View style={styles.headerLado}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <Text style={[styles.title, { flex: 1, textAlign: 'center' }]}>Mis Clientes</Text>
+        <View style={[styles.headerLado, { alignItems: 'flex-end' }]}>
+          {/* Rutinas del gym (plantillas): armar, publicar, editar, borrar */}
+          <TouchableOpacity
+            style={[styles.rutinasBtn, { shadowColor: colors.primary }]}
+            onPress={() => navigation.navigate('Plantillas', { modo: 'gestionar' })}
+            activeOpacity={0.8}
+            accessibilityLabel="Rutinas del gym"
+          >
+            <LinearGradient
+              colors={[colors.primary, colors.primaryShadow]}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={styles.rutinasBtnFondo}
+            >
+              <View style={styles.rutinasIcono}>
+                <Ionicons name="barbell" size={15} color={colors.primary} />
+              </View>
+              <Text style={[styles.rutinasBtnText, { color: colors.textOnPrimary }]}>Rutinas</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Search */}
@@ -185,6 +209,24 @@ function makeStyles(colors) {
       paddingHorizontal: spacing.lg,
       paddingVertical: 12,
     },
+    headerLado: { width: 112 },
+    // Pastilla "Rutinas": igual al botón Editar de Mi Rutina.
+    rutinasBtn: {
+      height: 40, borderRadius: 20,
+      shadowOpacity: 0.55, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+      elevation: 6,
+    },
+    rutinasBtnFondo: {
+      flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7,
+      paddingLeft: 5, paddingRight: 14, borderRadius: 20,
+      borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    },
+    rutinasIcono: {
+      width: 28, height: 28, borderRadius: 14,
+      backgroundColor: 'rgba(255,255,255,0.92)',
+      alignItems: 'center', justifyContent: 'center',
+    },
+    rutinasBtnText: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
     backBtn: {
       width: 40, height: 40, borderRadius: 20,
       backgroundColor: colors.surfaceContainerHigh,

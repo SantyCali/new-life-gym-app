@@ -2,13 +2,13 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { guardarPerfil } from '../services/perfilPrivadoService';
+import { registrarPushEntrenador } from '../services/avisosService';
 
 // Evaluated once at module load — no Notifications import needed here
 const IS_EXPO_GO = Constants.executionEnvironment === 'storeClient';
 
-export default function usePushNotifications(userId) {
+export default function usePushNotifications(userId, esEntrenador = false) {
   useEffect(() => {
     if (!userId) return;
 
@@ -22,11 +22,11 @@ export default function usePushNotifications(userId) {
       return;
     }
 
-    register(userId);
-  }, [userId]);
+    register(userId, esEntrenador);
+  }, [userId, esEntrenador]);
 }
 
-async function register(userId) {
+async function register(userId, esEntrenador) {
   // Deferred require: expo-notifications nunca se inicializa en Expo Go
   // porque esta función nunca se llama cuando IS_EXPO_GO === true.
   const Notifications = require('expo-notifications');
@@ -65,7 +65,10 @@ async function register(userId) {
     const { data: token } = await Notifications.getExpoPushTokenAsync(
       projectId ? { projectId } : undefined,
     );
-    await updateDoc(doc(db, 'users', userId), { expoPushToken: token });
+    await guardarPerfil(userId, { expoPushToken: token });
+    // Entrenadores: el código también va donde los alumnos lo pueden leer,
+    // para avisarles cuando se arman o modifican su rutina.
+    if (esEntrenador) await registrarPushEntrenador(userId, token).catch(() => {});
     if (__DEV__) console.log('[PushNotif] Token registrado:', token);
   } catch (e) {
     if (__DEV__) console.warn('[PushNotif] Error al registrar token:', e.message);

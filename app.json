@@ -2,7 +2,7 @@
   "expo": {
     "name": "New Life",
     "slug": "new-life-app",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "newlife",
@@ -39,7 +39,11 @@
         "backgroundColorDark": "#0A0A0A"
       },
       "package": "com.newlife.app",
-      "softwareKeyboardLayoutMode": "pan"
+      "softwareKeyboardLayoutMode": "pan",
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -51,6 +55,20 @@
       "expo-font",
       "@react-native-community/datetimepicker",
       "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "New Life accede a tus fotos para que puedas elegir una foto de perfil.",
+          "cameraPermission": "New Life accede a tu cámara para que puedas sacarte una foto de perfil.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ],
       [
         "expo-sensors",
         {
@@ -78,12 +96,27 @@
           }
         }
       ],
-      "expo-background-task"
+      "expo-background-task",
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "New Life lee tus pasos de la app Salud (iPhone y Apple Watch) para sumar puntos, racha y torneos.",
+          "NSHealthUpdateUsageDescription": "New Life no escribe datos en Salud: solo lee tus pasos para sumar puntos, racha y torneos.",
+          "background": false
+        }
+      ]
     ],
     "extra": {
       "eas": {
         "projectId": "5c5f8b0b-f34b-43a6-8400-f9c88b1d3eb2"
       }
+    },
+    "backgroundColor": "#0A0A0A",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/5c5f8b0b-f34b-43a6-8400-f9c88b1d3eb2"
     }
   }
 }

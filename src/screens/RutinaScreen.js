@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Image, Modal, Pressable, Dimensions,
   TextInput,
 } from 'react-native';
+import { useEspacioBarra } from '../navigation/PremiumTabBar';
 import Animated, {
   useSharedValue, useAnimatedStyle,
   withSpring, withTiming, withDelay, runOnJS, Easing,
@@ -12,20 +13,53 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { saveGymWeight } from '../services/progressService';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import useAuth from '../hooks/useAuth';
 import { typography, spacing, radius } from '../theme';
 import { subscribeToClientRoutine } from '../services/routineService';
-import { MUSCLE_GROUPS } from '../constants/exercises';
+import { MUSCLE_GROUPS, EXERCISE_BY_ID } from '../constants/exercises';
+import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { getExerciseImage, getExerciseGif } from '../constants/exerciseMedia';
 import useUserProfile from '../hooks/useUserProfile';
 
-export default function RutinaScreen() {
-  const { theme: { colors } } = useTheme();
+// Brillo suave del color de acento detrás de la pantalla (arriba a la derecha
+// y a la izquierda). Sale del tema: cambia con el color y con claro/oscuro.
+function FondoAmbiente({ color, fuerte }) {
+  return (
+    <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Defs>
+        <RadialGradient id="amb1" cx="80%" cy="8%" r="55%">
+          <Stop offset="0" stopColor={color} stopOpacity={fuerte ? 0.16 : 0.1} />
+          <Stop offset="1" stopColor={color} stopOpacity={0} />
+        </RadialGradient>
+        <RadialGradient id="amb2" cx="8%" cy="40%" r="45%">
+          <Stop offset="0" stopColor={color} stopOpacity={fuerte ? 0.1 : 0.06} />
+          <Stop offset="1" stopColor={color} stopOpacity={0} />
+        </RadialGradient>
+      </Defs>
+      <Rect width="100%" height="100%" fill="url(#amb1)" />
+      <Rect width="100%" height="100%" fill="url(#amb2)" />
+    </Svg>
+  );
+}
+
+export default function RutinaScreen({ navigation }) {
+  // Espacio al final para que la barra flotante no tape lo último.
+  const espacioBarra = useEspacioBarra();
+  const { theme: { colors, isDark } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user } = useAuth();
   const { profile } = useUserProfile();
   const insets = useSafeAreaInsets();
+  const fondo = <FondoAmbiente color={colors.primary} fuerte={isDark} />;
+
+  // El alumno se arma o edita su rutina (también la que le armó el entrenador)
+  // con el mismo editor que usan los entrenadores.
+  const abrirEditor = (rutina) => navigation.navigate('RoutineEditor', {
+    cliente: { uid: user?.uid, nombre: profile?.nombre ?? '', apellido: profile?.apellido ?? '' },
+    routine: rutina ?? null,
+  });
 
   const [routine, setRoutine]                   = useState(undefined);
   const [activeDayId, setDayId]                 = useState(null);
@@ -44,9 +78,12 @@ export default function RutinaScreen() {
     return unsub;
   }, [user?.uid]);
 
-  // Set initial day from stored gym visit index
+  // Día inicial según la visita al gym. Si el día elegido no está en la rutina
+  // (se cambió de rutina), se vuelve a elegir: antes quedaba "Este día no tiene
+  // ejercicios" con ningún día marcado.
   useEffect(() => {
-    if (!routine?.dias?.length || activeDayId) return;
+    if (!routine?.dias?.length) return;
+    if (activeDayId && routine.dias.some((d) => d.id === activeDayId)) return;
     const storedIdx = profile?.gymRoutineDayIndex ?? 0;
     const safeIdx   = Math.min(Math.max(0, storedIdx), routine.dias.length - 1);
     setDayId(routine.dias[safeIdx]?.id ?? null);
@@ -112,6 +149,7 @@ export default function RutinaScreen() {
     return (
       <Animated.View style={screenStyle}>
       <SafeAreaView style={styles.container} edges={['top']}>
+        {fondo}
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={colors.primary} size="large" />
         </View>
@@ -125,18 +163,35 @@ export default function RutinaScreen() {
     return (
       <Animated.View style={screenStyle}>
       <SafeAreaView style={styles.container} edges={['top']}>
+        {fondo}
         <Animated.View style={[styles.header, headerFadeStyle]}>
-          <Text style={styles.headerTitle}>Mi Rutina</Text>
+          <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>Mi Rutina</Text>
         </Animated.View>
         <View style={styles.emptyWrap}>
           <View style={[styles.emptyIconWrap, { backgroundColor: colors.primaryDim12 }]}>
             <Ionicons name="barbell-outline" size={44} color={colors.primary} />
           </View>
-          <Text style={styles.emptyTitle}>Sin rutina asignada</Text>
+          <Text style={styles.emptyTitle}>Todavía no tenés rutina</Text>
           <Text style={styles.emptySub}>
-            Tu entrenador todavía no te asignó una rutina.{'\n'}
-            ¡Consultale para que la cargue en la app!
+            Armate la tuya o pedísela a tu entrenador.{'\n'}
+            Tu entrenador también la va a poder ver.
           </Text>
+          <TouchableOpacity
+            style={[styles.armarBtn, { backgroundColor: colors.primary }]}
+            onPress={() => abrirEditor(null)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="add" size={18} color={colors.textInverse} />
+            <Text style={[styles.armarBtnText, { color: colors.textInverse }]}>Armar mi rutina</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.gymBtn, { borderColor: colors.primary + '66' }]}
+            onPress={() => navigation.navigate('Plantillas', { modo: 'elegir' })}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="albums-outline" size={17} color={colors.primary} />
+            <Text style={[styles.armarBtnText, { color: colors.primary }]}>Elegir una rutina del gym</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
       </Animated.View>
@@ -146,13 +201,49 @@ export default function RutinaScreen() {
   return (
     <Animated.View style={screenStyle}>
     <SafeAreaView style={styles.container} edges={['top']}>
+      {fondo}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <Animated.View style={[styles.header, headerFadeStyle]}>
         <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>Mi Rutina</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>{routine.nombre ?? 'Entrenamiento'}</Text>
+          <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>Mi Rutina</Text>
+          <Text style={styles.headerSub} numberOfLines={1}>
+            {routine.creadaPor === 'alumno' ? 'Armada por vos' : (routine.nombre ?? 'Entrenamiento')}
+          </Text>
         </View>
+        {/* Rutinas armadas por los entrenadores (para cambiar la actual) */}
+        <TouchableOpacity
+          style={[styles.rutinasGymBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primaryDim12 }]}
+          onPress={() => navigation.navigate('Plantillas', { modo: 'elegir' })}
+          activeOpacity={0.8}
+          hitSlop={6}
+          accessibilityLabel="Rutinas del gym"
+        >
+          <View style={[styles.rutinasGymIcono, { backgroundColor: colors.primary }]}>
+            <Ionicons name="barbell" size={14} color={colors.textOnPrimary} />
+          </View>
+          <Text style={[styles.rutinasGymText, { color: colors.primary }]}>Rutinas</Text>
+        </TouchableOpacity>
+        {(
+          <TouchableOpacity
+            style={[styles.editarBtn, { shadowColor: colors.primary }]}
+            onPress={() => abrirEditor(routine)}
+            activeOpacity={0.8}
+            hitSlop={6}
+            accessibilityLabel="Editar rutina"
+          >
+            <LinearGradient
+              colors={[colors.primary, colors.primaryShadow]}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={styles.editarBtnFondo}
+            >
+              <View style={styles.editarIcono}>
+                <Ionicons name="pencil" size={12} color={colors.primary} />
+              </View>
+              <Text style={[styles.editarBtnText, { color: colors.textOnPrimary }]}>Editar</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
         <View style={styles.avatar}>
           {profile?.photoBase64
             ? <Image source={{ uri: `data:image/jpeg;base64,${profile.photoBase64}` }} style={styles.avatarImg} />
@@ -163,7 +254,7 @@ export default function RutinaScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: espacioBarra }]}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Day tabs ────────────────────────────────────────────────────── */}
@@ -179,15 +270,23 @@ export default function RutinaScreen() {
               return (
                 <TouchableOpacity
                   key={day.id}
-                  style={[
-                    styles.dayTab,
-                    isActive && [styles.dayTabActive, { borderColor: colors.primary, backgroundColor: colors.primaryDim12 }],
-                  ]}
+                  style={[styles.dayTab, isActive && [styles.dayTabActive, { shadowColor: colors.primary }]]}
                   onPress={() => setDayId(day.id)}
+                  activeOpacity={0.85}
                 >
-                  <Text style={[styles.dayTabText, isActive && { color: colors.primary }]}>
-                    Día {day.numero}
-                  </Text>
+                  {isActive ? (
+                    <LinearGradient
+                      colors={[colors.primary, colors.primaryShadow]}
+                      start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                      style={styles.dayTabFondo}
+                    >
+                      <Text style={[styles.dayTabText, { color: colors.textOnPrimary }]}>Día {day.numero}</Text>
+                    </LinearGradient>
+                  ) : (
+                    <View style={[styles.dayTabFondo, { backgroundColor: colors.surfaceContainer, borderColor: colors.border, borderWidth: 1 }]}>
+                      <Text style={styles.dayTabText}>Día {day.numero}</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               );
             })}
@@ -195,17 +294,23 @@ export default function RutinaScreen() {
         )}
 
         {/* ── Day title ───────────────────────────────────────────────────── */}
-        <View style={styles.daySection}>
+        <LinearGradient
+          colors={[colors.surfaceContainer, colors.surfaceContainerHigh]}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={[styles.resumenCard, { borderColor: colors.border }]}
+        >
           <Text style={styles.dayTitle}>{dayTitle}</Text>
           <View style={styles.dayMetaRow}>
             <MetaItem icon="time-outline"    label={`${estimatedMinutes} min`}         colors={colors} styles={styles} />
             <View style={styles.metaDot} />
             <MetaItem icon="barbell-outline" label={`${exercises.length} ejercicios`}  colors={colors} styles={styles} />
           </View>
-          {muscleGroups.length > 1 && (
-            <Text style={[styles.muscleGroups, { color: colors.primary }]}>{muscleGroups.join(' · ')}</Text>
+          {muscleGroups.length > 0 && (
+            <View style={[styles.resumenMusculos, { borderTopColor: colors.border }]}>
+              <Text style={[styles.muscleGroups, { color: colors.primary }]}>{muscleGroups.join('  •  ')}</Text>
+            </View>
           )}
-        </View>
+        </LinearGradient>
 
         {/* ── Empty day ───────────────────────────────────────────────────── */}
         {exercises.length === 0 && (
@@ -232,6 +337,7 @@ export default function RutinaScreen() {
             />
           );
         })}
+
       </ScrollView>
 
       {selectedExercise && (
@@ -291,80 +397,83 @@ function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight,
 
   const hasUserWeight = savedWeight?.value != null && !savedWeight?.auto;
 
+  const maquina = EXERCISE_BY_ID[exercise.exerciseId]?.maquina;
+  const conMaquina = maquina && maquina !== 'Ninguna';
+
+  // Tocar la tarjeta abre el registro de series/peso (como antes);
+  // solo "Ver Técnica" abre el video.
   return (
     <TouchableOpacity activeOpacity={0.97} onPress={onWeightPress}>
-      <Animated.View style={[styles.heroOuter, cardAnimStyle]}>
-        <View style={[styles.heroInner, { borderColor: colors.borderLight, backgroundColor: colors.surfaceContainer }]}>
+    <Animated.View style={[styles.exCard, { borderColor: colors.border, backgroundColor: colors.surfaceContainer }, cardAnimStyle]}>
+      {/* Etiqueta del músculo y número */}
+      <LinearGradient colors={[colors.primary + '1F', colors.primary + '00']} style={styles.exArriba}>
+        <View style={styles.exTagFila}>
+          {groupMeta ? (
+            <View style={[styles.exTag, { backgroundColor: colors.primary + '2E', borderColor: colors.primary + '55' }]}>
+              <Ionicons name={groupMeta.icon} size={11} color={colors.primary} />
+              <Text style={[styles.exTagText, { color: colors.primary }]}>{groupMeta.label.toUpperCase()}</Text>
+            </View>
+          ) : <View />}
+          <Text style={styles.exNumero}>#{String(index + 1).padStart(2, '0')}</Text>
+        </View>
 
-          {/* Photo */}
-          <View style={styles.heroImageWrap}>
-            <Image
-              source={{ uri: getExerciseImage(exercise) }}
-              style={styles.heroImage}
-              resizeMode="contain"
-            />
-            <View style={styles.heroImageBottomFade} pointerEvents="none" />
-            {groupMeta && (
-              <View style={[styles.heroBadge, { backgroundColor: colors.primary }]}>
-                <Ionicons name={groupMeta.icon} size={10} color={colors.textInverse} />
-                <Text style={[styles.heroBadgeText, { color: colors.textInverse }]}>
-                  {groupMeta.label.toUpperCase()}
-                </Text>
+        {/* Imagen del ejercicio (la del dataset), con el nombre abajo */}
+        <View style={[styles.exImagen, { borderColor: colors.border }]}>
+          <Image source={{ uri: getExerciseImage(exercise) }} style={styles.heroImage} resizeMode="contain" />
+          <LinearGradient
+            colors={[colors.surfaceContainer + '00', colors.surfaceContainer + 'CC', colors.surfaceContainer]}
+            locations={[0.45, 0.8, 1]}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+          <View style={styles.exNombreFila}>
+            <Text style={styles.exNombre} numberOfLines={2}>{exercise.nombre}</Text>
+            {conMaquina && (
+              <View style={[styles.exEquipo, { backgroundColor: colors.background + 'CC', borderColor: colors.border }]}>
+                <Text style={[styles.exEquipoText, { color: colors.primary }]} numberOfLines={1}>{maquina}</Text>
               </View>
             )}
-            <View style={styles.heroTitleWrap}>
-              <Text style={styles.heroName}>{exercise.nombre}</Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      {/* Series, reps, descanso, peso */}
+      <View style={[styles.exGrilla, { borderColor: colors.border, backgroundColor: colors.surfaceContainerHigh }]}>
+        {[
+          { label: 'Series',   value: exercise.series,         unit: null },
+          { label: 'Reps',     value: exercise.repeticiones,   unit: null },
+          { label: 'Descanso', value: exercise.descanso ?? 90, unit: 's' },
+        ].map(stat => (
+          <View key={stat.label} style={[styles.exCelda, { borderRightColor: colors.border }]}>
+            <Text style={styles.statLabel}>{stat.label}</Text>
+            <View style={styles.statValueRow}>
+              <Text style={[styles.statValue, { color: colors.primary }]}>{stat.value}</Text>
+              {stat.unit && <Text style={styles.statUnit}>{stat.unit}</Text>}
             </View>
           </View>
-
-          {/* Stats */}
-          <View style={[styles.statsGrid, { borderTopColor: colors.borderLight }]}>
-            {[
-              { label: 'Series',   value: exercise.series,         unit: null },
-              { label: 'Reps',     value: exercise.repeticiones,   unit: null },
-              { label: 'Descanso', value: exercise.descanso ?? 90, unit: 's' },
-            ].map(stat => (
-              <View
-                key={stat.label}
-                style={[styles.statCell, { borderRightColor: colors.borderLight }]}
-              >
-                <Text style={styles.statLabel}>{stat.label}</Text>
-                <View style={styles.statValueRow}>
-                  <Text style={[styles.statValue, { color: colors.primary }]}>{stat.value}</Text>
-                  {stat.unit && <Text style={styles.statUnit}>{stat.unit}</Text>}
-                </View>
-              </View>
-            ))}
-
-            {/* Peso — tappable with edit cue */}
-            <TouchableOpacity
-              style={[styles.statCell, { borderRightColor: 'transparent' }]}
-              onPress={onWeightPress}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.statLabel}>PESO</Text>
-              <View style={styles.statValueRow}>
-                <Text style={[styles.statValue, { color: hasUserWeight ? colors.primary : colors.textTertiary }]}>
-                  {displayWeight}
-                </Text>
-                {displayWeight !== '—' && <Text style={styles.statUnit}>kg</Text>}
-              </View>
-              <Ionicons name="create-outline" size={10} color={colors.primary} style={{ marginTop: 3 }} />
-            </TouchableOpacity>
+        ))}
+        <TouchableOpacity style={[styles.exCelda, { borderRightWidth: 0 }]} onPress={onWeightPress} activeOpacity={0.7}>
+          <Text style={styles.statLabel}>PESO</Text>
+          <View style={styles.statValueRow}>
+            <Text style={[styles.statValue, { color: hasUserWeight ? colors.primary : colors.textTertiary }]}>{displayWeight}</Text>
+            {displayWeight !== '—' && <Text style={styles.statUnit}>kg</Text>}
+            <Ionicons name="create-outline" size={11} color={colors.primary} style={{ marginLeft: 3 }} />
           </View>
+        </TouchableOpacity>
+      </View>
 
-          {/* Ver Técnica */}
-          <TouchableOpacity
-            style={[styles.cardVideoBtn, { borderTopColor: colors.borderLight }]}
-            onPress={onPress}
-            activeOpacity={0.82}
-          >
-            <Ionicons name="body-outline" size={18} color={colors.primary} />
-            <Text style={[styles.cardVideoBtnText, { color: colors.primary }]}>Ver Técnica</Text>
-          </TouchableOpacity>
-
-        </View>
-      </Animated.View>
+      {/* Ver Técnica */}
+      <View style={styles.exPie}>
+        <TouchableOpacity
+          style={[styles.exTecnica, { backgroundColor: colors.primary + '1A', borderColor: colors.primary + '40' }]}
+          onPress={onPress}
+          activeOpacity={0.82}
+        >
+          <Ionicons name="body-outline" size={16} color={colors.primary} />
+          <Text style={[styles.cardVideoBtnText, { color: colors.primary }]}>Ver Técnica</Text>
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
     </TouchableOpacity>
   );
 }
@@ -446,9 +555,9 @@ function SeriesLogModal({ exercise, savedWeight, onWeightSave, onClose, colors }
     : `Serie ${currentSeries - 1} completada ✓  ¡Seguí así!`;
 
   return (
-    <Modal visible animationType="none" onRequestClose={dismiss} statusBarTranslucent transparent>
+    <Modal visible animationType="none" onRequestClose={dismiss} statusBarTranslucent transparent navigationBarTranslucent>
       <Animated.View style={[slSt.root, slideStyle]}>
-        <ScrollView bounces={false} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView bounces={false} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: insets.bottom }}>
 
           {/* ── Hero ── */}
           <View style={slSt.hero}>
@@ -745,7 +854,7 @@ function ExerciseVideoModal({ exercise, groupMeta, onClose, colors }) {
   }, [onClose]);
 
   return (
-    <Modal transparent visible animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+    <Modal transparent visible animationType="none" onRequestClose={dismiss} statusBarTranslucent navigationBarTranslucent>
       <Animated.View style={[vmSt.backdrop, backdropStyle]}>
         <Pressable style={StyleSheet.absoluteFillObject} onPress={dismiss} />
         <Animated.View
@@ -859,16 +968,38 @@ function makeStyles(colors) {
     // Day tabs
     dayTabsScroll: { marginHorizontal: -spacing.lg, marginBottom: 16 },
     dayTabs:       { paddingHorizontal: spacing.lg, paddingVertical: 6, flexDirection: 'row', gap: 8 },
-    dayTab: {
-      paddingHorizontal: 16, paddingVertical: 8, borderRadius: radius.full,
-      backgroundColor: colors.surfaceContainerHigh,
-      borderWidth: 1.5, borderColor: 'transparent',
+    // El fondo lo pone dayTabFondo (degradé si está elegido).
+    dayTab: { borderRadius: radius.full },
+    // Brillo del día elegido: en iOS con sombra de color; en Android la
+    // elevation sin fondo propio dibujaba un rectángulo oscuro.
+    dayTabActive: {
+      shadowOpacity: 0.55, shadowRadius: 10, shadowOffset: { width: 0, height: 2 },
     },
-    dayTabActive: {},
+    dayTabFondo: { paddingHorizontal: 20, paddingVertical: 9, borderRadius: 999, alignItems: 'center' },
     dayTabText:   { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
 
     // Day section
     daySection:   { marginBottom: 18 },
+    resumenCard:  { borderRadius: 18, borderWidth: 1, padding: 16, marginBottom: 18 },
+    resumenMusculos: { borderTopWidth: 1, marginTop: 6, paddingTop: 10 },
+    exCard: {
+      borderRadius: 18, borderWidth: 1, overflow: 'hidden', marginBottom: 16,
+      shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 3,
+    },
+    exArriba:    { paddingTop: 12, paddingHorizontal: 14, paddingBottom: 10 },
+    exTagFila:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    exTag:       { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7, borderWidth: 1 },
+    exTagText:   { fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
+    exNumero:    { fontSize: 11, fontWeight: '700', color: colors.textTertiary, fontVariant: ['tabular-nums'] },
+    exImagen:    { height: 170, borderRadius: 13, overflow: 'hidden', borderWidth: 1, backgroundColor: '#fff' },
+    exNombreFila: { position: 'absolute', left: 12, right: 12, bottom: 10, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 },
+    exNombre:    { flex: 1, fontSize: 17, fontWeight: '800', color: colors.text },
+    exEquipo:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, maxWidth: '45%' },
+    exEquipoText: { fontSize: 11, fontWeight: '700' },
+    exGrilla:    { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, paddingVertical: 12 },
+    exCelda:     { flex: 1, alignItems: 'center', borderRightWidth: 1 },
+    exPie:       { padding: 10 },
+    exTecnica:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, borderRadius: 13, borderWidth: 1 },
     dayTitle:     { fontSize: 23, fontWeight: '900', color: colors.text, letterSpacing: -0.5, marginBottom: 8 },
     dayMetaRow:   { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
     metaItem:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -886,6 +1017,46 @@ function makeStyles(colors) {
     },
     emptyTitle: { fontSize: 22, fontWeight: '900', color: colors.text, textAlign: 'center' },
     emptySub:   { fontSize: typography.sizes.base, color: colors.textSecondary, textAlign: 'center', lineHeight: 22 },
+    armarBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
+      borderRadius: radius.full, marginTop: spacing.lg,
+    },
+    armarBtnText: { fontSize: typography.sizes.base, fontWeight: '800' },
+    gymBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
+      borderRadius: radius.full, borderWidth: 1, marginTop: spacing.md,
+    },
+    // Pastilla "Rutinas": secundaria al lado de Editar (borde y fondo suave).
+    rutinasGymBtn: {
+      height: 40, borderRadius: 20, borderWidth: 1, marginRight: 8,
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      paddingLeft: 6, paddingRight: 12,
+    },
+    rutinasGymIcono: {
+      width: 26, height: 26, borderRadius: 13,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    rutinasGymText: { fontSize: 13, fontWeight: '800', letterSpacing: 0.2 },
+    // Pastilla de la misma altura que el avatar: degradé del color de acento,
+    // lápiz en un círculo claro y brillo.
+    editarBtn: {
+      height: 40, borderRadius: 20, marginRight: 10,
+      shadowOpacity: 0.55, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+      elevation: 6,
+    },
+    editarBtnFondo: {
+      flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7,
+      paddingLeft: 5, paddingRight: 15, borderRadius: 20,
+      borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    },
+    editarIcono: {
+      width: 28, height: 28, borderRadius: 14,
+      backgroundColor: 'rgba(255,255,255,0.92)',
+      alignItems: 'center', justifyContent: 'center',
+    },
+    editarBtnText: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
 
     // Hero card — outer has shadow, inner clips
     heroOuter: {

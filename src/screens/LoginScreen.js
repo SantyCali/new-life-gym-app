@@ -171,7 +171,7 @@ export default function LoginScreen({ navigation }) {
       </KeyboardAvoidingView>
 
       {/* Modal recuperar contraseña */}
-      <Modal visible={resetModal} transparent animationType="fade" onRequestClose={closeReset}>
+      <Modal visible={resetModal} transparent animationType="fade" onRequestClose={closeReset} statusBarTranslucent navigationBarTranslucent>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closeReset}>
           <TouchableOpacity style={styles.modalCard} activeOpacity={1} onPress={() => {}}>
             {resetSent ? (

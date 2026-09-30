@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, Image, ActivityIndicator,
@@ -27,12 +28,13 @@ export default function ClienteDetailScreen({ route, navigation }) {
   const [routine, setRoutine]   = useState(undefined); // undefined = loading
   const [loading, setLoading]   = useState(true);
 
-  useEffect(() => {
+  // Al volver del editor (o si el alumno la cambió) se vuelve a leer.
+  useFocusEffect(useCallback(() => {
     getClientRoutine(cliente.uid)
       .then(setRoutine)
       .catch(() => setRoutine(null))
       .finally(() => setLoading(false));
-  }, [cliente.uid]);
+  }, [cliente.uid]));
 
   const photoUri = cliente.photoBase64
     ? `data:image/jpeg;base64,${cliente.photoBase64}`
@@ -142,6 +144,16 @@ export default function ClienteDetailScreen({ route, navigation }) {
           <Text style={styles.progressBtnText}>Ver progreso</Text>
         </TouchableOpacity>
 
+        {/* Asignar una rutina del gym (plantilla) */}
+        <TouchableOpacity
+          style={styles.progressBtn}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Plantillas', { modo: 'asignar', cliente })}
+        >
+          <Ionicons name="albums-outline" size={20} color={colors.primary} style={{ marginRight: 8 }} />
+          <Text style={styles.progressBtnText}>Asignar rutina del gym</Text>
+        </TouchableOpacity>
+
         {/* Edit button */}
         <TouchableOpacity
           style={styles.editBtn}
@@ -196,6 +208,14 @@ function RoutineSummary({ routine, colors, styles }) {
         <Text style={styles.routineName}>{routine.nombre ?? 'Rutina'}</Text>
         <Text style={styles.routineDays}>{routine.dias?.length ?? 0} días</Text>
       </View>
+      {(routine.creadaPor === 'alumno' || routine.editadaPor === 'alumno') && (
+        <View style={styles.armadaAlumno}>
+          <Ionicons name="person-outline" size={12} color={colors.primary} />
+          <Text style={styles.armadaAlumnoText}>
+            {routine.creadaPor === 'alumno' ? 'Armada por el alumno' : 'El alumno la modificó'}
+          </Text>
+        </View>
+      )}
 
       {(routine.dias ?? []).map(day => (
         <View key={day.id} style={styles.dayRow}>
@@ -392,6 +412,12 @@ function makeStyles(colors) {
       color: colors.primary,
       fontWeight: typography.weights.bold,
     },
+    armadaAlumno: {
+      flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
+      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+      backgroundColor: colors.primaryDim12, marginBottom: 8,
+    },
+    armadaAlumnoText: { fontSize: typography.sizes.xs, color: colors.primary, fontWeight: typography.weights.bold },
     dayRow: {
       flexDirection: 'row', alignItems: 'center', gap: 10,
       paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.borderLight,

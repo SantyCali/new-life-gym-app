@@ -9,7 +9,6 @@ import Animated, {
   Easing, interpolate, runOnJS,
 } from 'react-native-reanimated';
 import GoalModal from '../components/ui/GoalModal';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,9 +18,7 @@ import useAuth from '../hooks/useAuth';
 import { useStepContext } from '../context/StepContext';
 import { spacing, radius } from '../theme';
 import { fetchWeeklyStepHistory } from '../services/userService';
-import { calcCalories, computeAge } from '../services/stepService';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { calcCalories, computeAge, localDateString } from '../services/stepService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const { width: SW } = Dimensions.get('window');
@@ -32,8 +29,6 @@ const RING_R = RING_CX - 14;
 const RING_STROKE = 12;
 const RING_C = 2 * Math.PI * RING_R;
 
-const DEFAULT_GOAL  = 10000;
-const STORAGE_KEY   = 'dailyStepGoal';
 const CHART_H       = 140;
 const FIRE_H        = 28;
 const SCREEN_H      = Dimensions.get('window').height;
@@ -48,7 +43,7 @@ export default function RachaScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { profile } = useUserProfile();
   const { user }    = useAuth();
-  const { steps }   = useStepContext();
+  const { steps, goal, setGoal: guardarMeta } = useStepContext();
 
   // ── Weekly step history ───────────────────────────────────────────────────
   const [weekData, setWeekData] = useState(null);
@@ -63,10 +58,11 @@ export default function RachaScreen({ navigation }) {
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (6 - i));
-      const dateStr = d.toISOString().split('T')[0];
+      // Fecha local: toISOString es UTC y después de las 21 h daba el día siguiente.
+      const dateStr = localDateString(d);
       const dayIdx  = (d.getDay() + 6) % 7; // Mon=0…Sun=6
       const daySteps = i === 6 ? steps : (weekData?.[dateStr] ?? 0);
-      return { day: DAY_LETTERS[dayIdx], steps: daySteps, trained: daySteps >= 5000 };
+      return { day: DAY_LETTERS[dayIdx], steps: daySteps };
     });
   }, [weekData, steps]);
 
@@ -125,37 +121,15 @@ export default function RachaScreen({ navigation }) {
   }, [handleBack]);
 
   // ── Goal state ────────────────────────────────────────────────────────────
-  const [goal, setGoal]             = useState(DEFAULT_GOAL);
+  // La meta es la del perfil (StepContext), la misma que usan Inicio, la
+  // racha y los puntos.
   const [goalInput, setGoalInput]   = useState('');
   const [goalModalVisible, setGoalModal] = useState(false);
 
-  // Carga el goal: AsyncStorage primero (instantáneo), luego Firestore vía profile
-  useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then(v => {
-      if (v) setGoal(Number(v));
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!profile?.dailyStepGoal) return;
-    AsyncStorage.getItem(STORAGE_KEY).then(v => {
-      // Si no hay valor local, usar el de Firestore (nuevo dispositivo)
-      if (!v) {
-        setGoal(profile.dailyStepGoal);
-        AsyncStorage.setItem(STORAGE_KEY, String(profile.dailyStepGoal));
-      }
-    });
-  }, [profile?.dailyStepGoal]);
-
   const saveGoal = useCallback((val) => {
-    const n = Math.max(1000, Math.min(50000, Number(val) || DEFAULT_GOAL));
-    setGoal(n);
-    AsyncStorage.setItem(STORAGE_KEY, String(n));
-    if (user?.uid) {
-      updateDoc(doc(db, 'users', user.uid), { dailyStepGoal: n }).catch(() => {});
-    }
+    guardarMeta(val);
     setGoalModal(false);
-  }, [user?.uid]);
+  }, [guardarMeta]);
 
   // ── Entry animation — ALL sections animate on mount, no scroll needed ─────
   useEffect(() => {
@@ -375,9 +349,6 @@ export default function RachaScreen({ navigation }) {
                     <View style={[styles.nextGoalFill, { width: `${Math.round(ringProgress * 100)}%` }]} />
                   </View>
                 </View>
-                <Text style={styles.nextGoalReward}>
-                  🏅 Recompensa: Insignia "Guerrero de Hierro"
-                </Text>
               </View>
             </Animated.View>
           )}
@@ -496,7 +467,6 @@ function makeStyles(colors) {
     nextGoalMetaText: { fontSize: 11, fontWeight: '700', color: 'rgba(0,0,0,0.65)' },
     nextGoalTrack:  { height: 8, backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: radius.full, overflow: 'hidden', zIndex: 1 },
     nextGoalFill:   { height: '100%', backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: radius.full },
-    nextGoalReward: { fontSize: 11, fontWeight: '600', color: 'rgba(0,0,0,0.55)', zIndex: 1, fontStyle: 'italic' },
 
     footerGrid: { flexDirection: 'row', gap: 8 },
     footerCell: {

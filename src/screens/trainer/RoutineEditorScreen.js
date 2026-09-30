@@ -1,29 +1,69 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Alert, ActivityIndicator, KeyboardAvoidingView,
   Platform, Modal, Pressable, FlatList, useWindowDimensions, Image,
-  LayoutAnimation, UIManager,
 } from 'react-native';
 
-if (Platform.OS === 'android') {
-  UIManager.setLayoutAnimationEnabledExperimental?.(true);
-}
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue, useAnimatedStyle, withSpring, withTiming,
-  runOnJS, Easing,
+  runOnJS, Easing, useAnimatedRef, useAnimatedScrollHandler,
+  useFrameCallback, scrollTo, measure, useAnimatedReaction,
 } from 'react-native-reanimated';
 import { useTheme } from '../../context/ThemeContext';
 import useAuth from '../../hooks/useAuth';
 import { typography, spacing, radius } from '../../theme';
 import { MUSCLE_GROUPS, EXERCISES_BY_GROUP, EXERCISES } from '../../constants/exercises';
 import { saveRoutine, makeDay, makeExerciseSlot } from '../../services/routineService';
+import { avisarRutinaDelAlumno } from '../../services/avisosService';
+import { guardarPlantilla } from '../../services/plantillasService';
 import { getExerciseImage, getExerciseGif } from '../../constants/exerciseMedia';
 
-const ITEM_HEIGHT = 104; // approximate card height for DnD calculations
+// Arrastrar para reordenar: se usa la altura real de cada tarjeta (medida con
+// onLayout), así el hueco es exacto aunque unas tengan más datos que otras.
+const ITEM_HEIGHT = 104; // solo hasta que la tarjeta se mide
+const CARD_GAP    = 6;   // = cardWrap.marginBottom
+
+function slotDe(medidas, i) {
+  'worklet';
+  return medidas[i] ?? { y: i * ITEM_HEIGHT, h: ITEM_HEIGHT - CARD_GAP };
+}
+
+// Posición a la que va la tarjeta: bajando, cuando su borde de abajo pasa la
+// mitad de la de abajo; subiendo, cuando su borde de arriba pasa la mitad de
+// la de arriba. Así el hueco la sigue de cerca.
+function destinoDe(medidas, desde, total, dy) {
+  'worklet';
+  const o = slotDe(medidas, desde);
+  const arriba = o.y + dy;
+  const abajo  = o.y + o.h + dy;
+  let destino = desde;
+  if (dy > 0) {
+    for (let i = desde + 1; i < total; i++) {
+      const s = slotDe(medidas, i);
+      if (abajo > s.y + s.h / 2) destino = i; else break;
+    }
+  } else if (dy < 0) {
+    for (let i = desde - 1; i >= 0; i--) {
+      const s = slotDe(medidas, i);
+      if (arriba < s.y + s.h / 2) destino = i; else break;
+    }
+  }
+  return destino;
+}
+
+// Cuánto se tiene que mover la tarjeta para quedar justo en su nuevo lugar.
+function desplazamientoHasta(medidas, desde, hasta) {
+  'worklet';
+  if (hasta === desde) return 0;
+  const o = slotDe(medidas, desde);
+  const d = slotDe(medidas, hasta);
+  return hasta > desde ? (d.y + d.h) - (o.y + o.h) : d.y - o.y;
+}
 
 // Normaliza texto para comparar en el buscador de ejercicios: quita tildes/diacríticos
 // y pasa a minúsculas. Solo se usa para la comparación — no toca el nombre mostrado.
@@ -35,9 +75,16 @@ const normalizeSearch = (text) =>
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function RoutineEditorScreen({ route, navigation }) {
-  const { cliente, routine: existingRoutine } = route.params;
+  // Modo plantilla: un entrenador arma una rutina modelo (route.params.plantilla)
+  // en vez de la rutina de un alumno.
+  const { cliente, plantilla: plantillaParam } = route.params;
+  const esPlantilla = !!plantillaParam;
+  const existingRoutine = esPlantilla ? plantillaParam : route.params.routine;
   const { theme: { colors } } = useTheme();
   const { user } = useAuth();
+  // El alumno armándose su propia rutina (desde Mi Rutina).
+  const esPropia = !esPlantilla && cliente?.uid === user?.uid;
+  const [nombrePlantilla, setNombrePlantilla] = useState(plantillaParam?.nombre ?? '');
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -50,10 +97,103 @@ export default function RoutineEditorScreen({ route, navigation }) {
   const [addSheetOpen, setAddSheet]   = useState(false);
   const [editTarget, setEditTarget]   = useState(null);
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  // El scroll de la lista entra al sistema de gestos: así el arrastre de una
+  // tarjeta puede tener prioridad sobre él. En iPhone, si el dedo se movía un
+  // poquito durante el toque largo, la lista empezaba a scrollear, le robaba
+  // el toque al arrastre y la tarjeta se soltaba sola.
+  const scrollNativa = React.useMemo(() => Gesture.Native(), []);
   const draggingIndexSV = useSharedValue(-1);
   const hoverIndexSV    = useSharedValue(-1);
+  const medidasSV       = useSharedValue({});    // índice → { y, h } de cada tarjeta
+  const acomodandoSV    = useSharedValue(false); // la tarjeta soltada va a su lugar
+  const resetPendienteRef = React.useRef(false);
+
+  // Scroll automático mientras se arrastra: si el dedo llega cerca del borde de
+  // arriba o de abajo de la lista, la lista se mueve sola (más rápido cuanto
+  // más cerca del borde) y la tarjeta sigue pegada al dedo.
+  const listaRef      = useAnimatedRef();
+  const scrollYSV     = useSharedValue(0);   // posición que usa el arrastre
+  const scrollRealSV  = useSharedValue(0);   // la que informa la lista
+  const ultimoCuadroSV = useSharedValue(0);  // timestamp del último cuadro usado
+  const contenidoHSV  = useSharedValue(0);
+  const arrastre      = {
+    dedoY:       useSharedValue(0),  // dónde está el dedo en la pantalla
+    agarre:      useSharedValue(0),  // a qué altura de la tarjeta se la agarró
+    fantasmaTop: useSharedValue(0),  // borde de arriba de la tarjeta flotante, relativo a la lista
+    listaTop:    useSharedValue(0),
+    listaAlto:   useSharedValue(0),
+    total:       useSharedValue(0),
+    fantasmaListo: useSharedValue(false), // la flotante ya se dibujó
+  };
+  // La tarjeta arrastrada se dibuja flotando FUERA de la lista y sigue solo al
+  // dedo. Antes se movía adentro del contenido con translateY = dedo + scroll:
+  // el scroll lo aplica Android (scrollTo) y el translateY Reanimated, y no
+  // llegan en el mismo cuadro, así que temblaba mientras la lista se movía
+  // sola; y si el dedo salía de la lista, la lista la recortaba y desaparecía.
+  // En la lista queda su lugar (invisible) y las demás se corren igual que antes.
+  const [fantasma, setFantasma] = useState(null);
+  const fantasmaStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: arrastre.fantasmaTop.value }, { scale: 1.03 }],
+  }));
+  // Mientras el scroll automático está moviendo la lista, manda la posición
+  // que él mismo pidió (los eventos llegan un cuadro tarde). Cuando no se está
+  // moviendo solo, se usa la real: si la lista se movió por otra cosa, el hueco
+  // se calcula con dónde está de verdad.
+  const onScrollLista = useAnimatedScrollHandler((e) => {
+    scrollRealSV.value = e.contentOffset.y;
+    if (draggingIndexSV.value === -1) scrollYSV.value = e.contentOffset.y;
+  });
+
+  // Velocidad por tiempo (px/s), no por cuadro: igual de rápido aunque el
+  // celular dibuje menos cuadros por segundo. Acelera fuerte cerca del borde.
+  useFrameCallback((frame) => {
+    const desde = draggingIndexSV.value;
+    if (desde === -1 || acomodandoSV.value) { ultimoCuadroSV.value = 0; return; }
+    const ZONA = 120;           // px desde cada borde donde empieza a moverse
+    const VEL_MIN = 350;        // px/s apenas entra en la zona
+    const VEL_MAX = 2200;       // px/s pegado al borde
+    const top = arrastre.listaTop.value;
+    const alto = arrastre.listaAlto.value;
+    const y = arrastre.dedoY.value;
+    let dir = 0;
+    let fuerza = 0;
+    if (y < top + ZONA)             { dir = -1; fuerza = (top + ZONA - y) / ZONA; }
+    else if (y > top + alto - ZONA) { dir =  1; fuerza = (y - (top + alto - ZONA)) / ZONA; }
+    if (dir === 0) {
+      // Sin scroll automático: sincroniza con la posición real.
+      if (scrollYSV.value !== scrollRealSV.value) {
+        scrollYSV.value = scrollRealSV.value;
+        hoverIndexSV.value = destinoDe(medidasSV.value, desde, arrastre.total.value,
+          arrastre.fantasmaTop.value + scrollYSV.value - slotDe(medidasSV.value, desde).y);
+      }
+      return;
+    }
+    fuerza = Math.min(1, Math.max(0, fuerza));
+    // Tiempo desde el último cuadro, calculado acá: timeSincePreviousFrame de
+    // Reanimated a veces viene NEGATIVO (cuadros que llegan desordenados, medido
+    // en el emulador: -0.5 a -5 ms). Con dt negativo la velocidad cambiaba de
+    // signo y la lista iba un cuadro para el lado contrario y volvía: ese era
+    // el temblor contra los bordes. Los cuadros desordenados se ignoran.
+    const ts = frame.timestamp;
+    const previo = ultimoCuadroSV.value;
+    if (ts <= previo) return;
+    ultimoCuadroSV.value = ts;
+    if (previo === 0) return; // primer cuadro del arrastre: todavía no hay dt
+    const dt = Math.min(0.05, (ts - previo) / 1000);
+    const vel = dir * (VEL_MIN + (VEL_MAX - VEL_MIN) * fuerza * fuerza) * dt;
+    const max = Math.max(0, contenidoHSV.value - alto);
+    const nuevo = Math.min(max, Math.max(0, scrollYSV.value + vel));
+    // Nunca para el lado contrario al del borde donde está el dedo.
+    if (dir < 0 ? nuevo >= scrollYSV.value : nuevo <= scrollYSV.value) return;
+    scrollYSV.value = nuevo;
+    scrollTo(listaRef, 0, nuevo, false);
+    hoverIndexSV.value = destinoDe(medidasSV.value, desde, arrastre.total.value,
+      arrastre.fantasmaTop.value + nuevo - slotDe(medidasSV.value, desde).y);
+  });
   // Track routine ID in a ref so repeated saves update the same document
   const routineIdRef = React.useRef(existingRoutine?.id ?? null);
+  // Se avisa a los entrenadores una vez por visita al editor, no en cada Guardar.
+  const avisadoRef = React.useRef(false);
 
   const activeDay = days.find(d => d.id === activeDayId) ?? days[0];
 
@@ -116,10 +256,6 @@ export default function RoutineEditorScreen({ route, navigation }) {
   }, [activeDayId]);
 
   const reorderExercises = useCallback((fromIndex, toIndex) => {
-    LayoutAnimation.configureNext({
-      duration: 300,
-      update: { type: LayoutAnimation.Types.easeInEaseOut },
-    });
     setDays(p => p.map(day => {
       if (day.id !== activeDayId) return day;
       const arr = [...day.ejercicios];
@@ -133,16 +269,41 @@ export default function RoutineEditorScreen({ route, navigation }) {
   const handleSave = useCallback(async () => {
     const totalEx = days.reduce((s, d) => s + d.ejercicios.length, 0);
     if (totalEx === 0) { Alert.alert('Rutina vacía', 'Agregá al menos un ejercicio.'); return; }
+    if (esPlantilla && !nombrePlantilla.trim()) { Alert.alert('Falta el nombre', 'Ponele un nombre a la rutina, ej: "Principiante 3 días".'); return; }
     setSaving(true);
     try {
+      if (esPlantilla) {
+        const id = await guardarPlantilla({
+          id: routineIdRef.current,
+          nombre: nombrePlantilla,
+          dias: days,
+          autorUid: user?.uid,
+          autorNombre: user?.displayName ?? '',
+        });
+        routineIdRef.current = id;
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        return;
+      }
       const savedId = await saveRoutine({
         id:           routineIdRef.current,
-        clienteId:    cliente.uid,
-        entrenadorId: user?.uid,
-        nombre:       `Rutina de ${cliente.nombre ?? 'cliente'}`,
+        clienteId:    cliente?.uid,
+        // Si el alumno edita la que le armó el entrenador, sigue figurando ese
+        // entrenador y el mismo nombre.
+        entrenadorId: esPropia && existingRoutine?.entrenadorId ? existingRoutine.entrenadorId : user?.uid,
+        nombre:       existingRoutine?.nombre ?? (esPropia ? 'Mi rutina' : `Rutina de ${cliente.nombre ?? 'cliente'}`),
         dias:         days,
+        creadaPor:    esPropia ? 'alumno' : 'entrenador',
+        editadaPor:   esPropia ? 'alumno' : 'entrenador',
       });
+      const eraNueva = !routineIdRef.current;
       routineIdRef.current = savedId;
+      // Alguien se armó o modificó su propia rutina: aviso a los entrenadores
+      // (a todos, también si es un entrenador; ver avisosService).
+      if (esPropia && !avisadoRef.current) {
+        avisadoRef.current = true;
+        avisarRutinaDelAlumno({ uid: cliente.uid, nombre: cliente.nombre, apellido: cliente.apellido, nueva: eraNueva });
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -151,7 +312,45 @@ export default function RoutineEditorScreen({ route, navigation }) {
     } finally {
       setSaving(false);
     }
-  }, [days, cliente, user]);
+  }, [days, cliente, user, esPropia, esPlantilla, nombrePlantilla]);
+
+  // Terminó el arrastre (la tarjeta ya llegó a su lugar). Si cambió el orden,
+  // los desplazamientos se ponen en 0 en el mismo render en que cambia el orden
+  // (useLayoutEffect de abajo): cada tarjeta queda donde estaba, sin salto.
+  // La tarjeta flotante se saca en el mismo render en que la de la lista vuelve
+  // a verse (ya en su lugar nuevo): no hay cuadro sin ninguna de las dos.
+  const terminarArrastre = useCallback((desde, hasta) => {
+    // Toque suave al soltarla en su lugar.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (desde !== hasta) {
+      resetPendienteRef.current = true;
+      reorderExercises(desde, hasta);
+    } else {
+      draggingIndexSV.value = -1;
+      hoverIndexSV.value    = -1;
+      acomodandoSV.value    = false;
+    }
+    arrastre.fantasmaListo.value = false;
+    setFantasma(null);
+    setScrollEnabled(true);
+  }, [reorderExercises]);
+
+  const empezarArrastre = useCallback((slot) => {
+    // Toque firme al agarrar la tarjeta.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setFantasma(slot);
+    // En Android hace falta apagar el scroll de la lista; en iPhone cambiarlo
+    // en pleno toque cancela el arrastre (ahí ya lo bloquea blocksExternalGesture).
+    if (Platform.OS === 'android') setScrollEnabled(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!resetPendienteRef.current) return;
+    resetPendienteRef.current = false;
+    draggingIndexSV.value = -1;
+    hoverIndexSV.value    = -1;
+    acomodandoSV.value    = false;
+  }, [days]);
 
   const sortedExercises = useMemo(
     () => (activeDay?.ejercicios ?? []).slice().sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)),
@@ -231,15 +430,33 @@ export default function RoutineEditorScreen({ route, navigation }) {
 
       {/* Client name — compact subtitle line */}
       <Text style={styles.clientName} numberOfLines={1}>
-        {cliente.nombre} {cliente.apellido}
+        {esPlantilla ? 'Rutina del gym (plantilla)' : esPropia ? 'Tu rutina' : `${cliente?.nombre ?? ''} ${cliente?.apellido ?? ''}`}
       </Text>
+      {esPlantilla && (
+        <TextInput
+          style={styles.nombrePlantilla}
+          value={nombrePlantilla}
+          onChangeText={setNombrePlantilla}
+          placeholder='Nombre, ej: "Principiante 3 días"'
+          placeholderTextColor={colors.textTertiary}
+          maxLength={60}
+        />
+      )}
 
       {/* ── Exercise list ── */}
-      <ScrollView
+      <View style={styles.listScroll}>
+      <GestureDetector gesture={scrollNativa}>
+      <Animated.ScrollView
+        ref={listaRef}
         style={styles.listScroll}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         scrollEnabled={scrollEnabled}
+        onScroll={onScrollLista}
+        scrollEventThrottle={16}
+        overScrollMode="never"
+        bounces={false}
+        onContentSizeChange={(w, h) => { contenidoHSV.value = h; }}
       >
         {sortedExercises.length === 0 ? (
           <View style={styles.emptyDay}>
@@ -258,16 +475,45 @@ export default function RoutineEditorScreen({ route, navigation }) {
               styles={styles}
               onEdit={() => setEditTarget(slot)}
               onDelete={() => deleteExercise(slot.id)}
-              onReorder={reorderExercises}
-              onDragStart={() => setScrollEnabled(false)}
-              onDragEnd={() => setScrollEnabled(true)}
+              onDrop={terminarArrastre}
+              onDragStart={empezarArrastre}
               draggingIndexSV={draggingIndexSV}
               hoverIndexSV={hoverIndexSV}
+              medidasSV={medidasSV}
+              acomodandoSV={acomodandoSV}
+              listaRef={listaRef}
+              scrollYSV={scrollYSV}
+              arrastre={arrastre}
+              scrollNativa={scrollNativa}
             />
           ))
         )}
         <View style={{ height: 100 }} />
-      </ScrollView>
+      </Animated.ScrollView>
+      </GestureDetector>
+
+      {/* Tarjeta que se está arrastrando, flotando sobre la lista */}
+      {fantasma && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.fantasma, fantasmaStyle]}
+          onLayout={() => { arrastre.fantasmaListo.value = true; }}
+        >
+          <View style={styles.cardWrap}>
+            <ContenidoTarjeta
+              slot={fantasma}
+              colors={colors}
+              styles={styles}
+              handle={(
+                <View style={[styles.dragHandle, { backgroundColor: colors.primaryDim12 }]}>
+                  <Ionicons name="reorder-three" size={22} color={colors.textTertiary} />
+                </View>
+              )}
+            />
+          </View>
+        </Animated.View>
+      )}
+      </View>
 
       {/* ── Floating add button ── */}
       <TouchableOpacity
@@ -299,89 +545,169 @@ export default function RoutineEditorScreen({ route, navigation }) {
   );
 }
 
+// ── Contenido de una tarjeta (lo usan la de la lista y la flotante) ─────────
+function ContenidoTarjeta({ slot, colors, styles, handle, onThumb, onEdit, onDelete }) {
+  const exRef     = { exerciseId: slot.exerciseId, id: slot.id };
+  const thumbUri  = getExerciseImage(exRef);
+  const groupMeta = MUSCLE_GROUPS.find(g => g.id === slot.grupoMuscular);
+  return (
+    <>
+      {handle}
+      <View style={styles.cardBody}>
+        <View style={styles.cardTopRow}>
+          {/* Thumbnail — tap to see animated GIF */}
+          <TouchableOpacity style={styles.cardThumb} onPress={onThumb} activeOpacity={0.8} disabled={!onThumb}>
+            <Image source={{ uri: thumbUri }} style={styles.cardThumbImg} resizeMode="contain" />
+          </TouchableOpacity>
+
+          <View style={styles.cardNameWrap}>
+            <Text style={styles.cardName} numberOfLines={1}>{slot.nombre}</Text>
+            {groupMeta && (
+              <View style={styles.cardGroupPill}>
+                <Text style={styles.cardGroupText}>{groupMeta.label}</Text>
+              </View>
+            )}
+          </View>
+          <View style={styles.cardActions}>
+            <TouchableOpacity style={styles.editBtn} onPress={onEdit} hitSlop={8} disabled={!onEdit}>
+              <Ionicons name="create-outline" size={18} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} hitSlop={8} disabled={!onDelete}>
+              <Ionicons name="trash-outline" size={16} color="#E5302A" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.cardMetaRow}>
+          <MetaPill icon="repeat-outline"  label={`${slot.series} series`}     colors={colors} styles={styles} />
+          <MetaPill icon="barbell-outline" label={`${slot.repeticiones} reps`} colors={colors} styles={styles} />
+          {slot.carga != null && (
+            <MetaPill icon="scale-outline" label={`${slot.carga} kg`}          colors={colors} styles={styles} />
+          )}
+          {slot.descanso && (
+            <MetaPill icon="timer-outline" label={`${slot.descanso}s`}         colors={colors} styles={styles} />
+          )}
+        </View>
+
+        {!!slot.observaciones && (
+          <Text style={styles.cardObs} numberOfLines={1}>{slot.observaciones}</Text>
+        )}
+      </View>
+    </>
+  );
+}
+
 // ── Exercise Card (drag-to-reorder + delete button) ──────────────────────────
-function ExerciseCard({ slot, index, total, colors, styles, onEdit, onDelete, onReorder, onDragStart, onDragEnd, draggingIndexSV, hoverIndexSV }) {
-  const cardOffset = useSharedValue(0);
+function ExerciseCard({ slot, index, total, colors, styles, onEdit, onDelete, onDrop, onDragStart, draggingIndexSV, hoverIndexSV, medidasSV, acomodandoSV, listaRef, scrollYSV, arrastre, scrollNativa }) {
+  const tarjetaRef = useAnimatedRef();
 
-  const commitReorder = useCallback((from, to) => {
-    if (from !== to) onReorder(from, to);
-    onDragEnd();
-  }, [onReorder, onDragEnd]);
+  // Se mide la vista de afuera (sin transform) y se descuenta el margen.
+  const medir = useCallback((e) => {
+    const { y, height } = e.nativeEvent.layout;
+    medidasSV.value = { ...medidasSV.value, [index]: { y, h: height - CARD_GAP } };
+  }, [index]);
 
-  const dragGesture = Gesture.Pan()
+  // Suelta (o cancelada): la flotante se desliza hasta su lugar en la lista y
+  // recién ahí cambia el orden.
+  const soltar = (destino) => {
+    'worklet';
+    acomodandoSV.value = true;
+    hoverIndexSV.value = destino;
+    const m = medidasSV.value;
+    const o = slotDe(m, index);
+    const d = slotDe(m, destino);
+    const topContenido = destino > index ? d.y + d.h - o.h : destino < index ? d.y : o.y;
+    arrastre.fantasmaTop.value = withTiming(
+      topContenido - scrollYSV.value,
+      { duration: 170, easing: Easing.out(Easing.cubic) },
+      () => { runOnJS(onDrop)(index, destino); },
+    );
+  };
+
+  // El gesto se arma una sola vez (useMemo). Si se volvía a crear en cada
+  // redibujo, en iPhone el redibujo que muestra la tarjeta flotante lo
+  // cancelaba en pleno arrastre y la tarjeta "se soltaba sola".
+  const dragGesture = useMemo(() => Gesture.Pan()
     .activateAfterLongPress(300)
-    .onStart(() => {
-      cardOffset.value      = 0;   // cancel any spring from a previous drop
+    // Mientras se arrastra, la lista no puede scrollear por su cuenta (el
+    // scroll lo maneja el scroll automático). Si el dedo se mueve antes de los
+    // 300 ms, el arrastre falla y la lista scrollea normal.
+    .blocksExternalGesture(scrollNativa)
+    .onStart((e) => {
+      if (acomodandoSV.value) return;
+      const lista = measure(listaRef);
+      const tarjeta = measure(tarjetaRef);
+      if (!lista || !tarjeta) return;
+      arrastre.listaTop.value    = lista.pageY;
+      arrastre.listaAlto.value   = lista.height;
+      arrastre.agarre.value      = e.absoluteY - tarjeta.pageY;
+      arrastre.fantasmaTop.value = tarjeta.pageY - lista.pageY;
+      arrastre.dedoY.value       = e.absoluteY;
+      arrastre.total.value       = total;
       draggingIndexSV.value = index;
       hoverIndexSV.value    = index;
-      runOnJS(onDragStart)();
+      runOnJS(onDragStart)(slot);
     })
     .onUpdate((e) => {
-      cardOffset.value   = e.translationY;
-      hoverIndexSV.value = Math.max(0, Math.min(total - 1, index + Math.round(e.translationY / ITEM_HEIGHT)));
+      if (draggingIndexSV.value !== index || acomodandoSV.value) return;
+      const alto = slotDe(medidasSV.value, index).h;
+      arrastre.dedoY.value = e.absoluteY;
+      // Sigue al dedo, pero sin salirse de la lista.
+      arrastre.fantasmaTop.value = Math.min(
+        Math.max(0, e.absoluteY - arrastre.agarre.value - arrastre.listaTop.value),
+        Math.max(0, arrastre.listaAlto.value - alto),
+      );
+      hoverIndexSV.value = destinoDe(medidasSV.value, index, total,
+        arrastre.fantasmaTop.value + scrollYSV.value - slotDe(medidasSV.value, index).y);
     })
     .onEnd(() => {
-      const target = hoverIndexSV.value;
-      // Snap cardOffset to the EXACT pixel delta the layout will travel.
-      // This ensures withTiming starts from (target-index)*ITEM_HEIGHT — the same
-      // distance LayoutAnimation covers — so both cancel perfectly with no snap.
-      cardOffset.value      = (target - index) * ITEM_HEIGHT;
-      hoverIndexSV.value    = -1;
-      draggingIndexSV.value = -1;
-      runOnJS(commitReorder)(index, target);
+      if (draggingIndexSV.value !== index || acomodandoSV.value) return;
+      soltar(hoverIndexSV.value);
     })
     .onFinalize(() => {
-      // Always reset state — covers gesture cancellation (no onEnd fired)
-      hoverIndexSV.value    = -1;
-      draggingIndexSV.value = -1;
-      runOnJS(onDragEnd)();
-    });
+      // Cancelado (sin onEnd): vuelve a su lugar.
+      if (draggingIndexSV.value !== index || acomodandoSV.value) return;
+      soltar(index);
+    }), [index, total, slot, onDragStart, onDrop, scrollNativa]);
 
-  const cardStyle = useAnimatedStyle(() => {
-    const dragFrom   = draggingIndexSV.value;
-    const dragTo     = hoverIndexSV.value;
-    const amDragging = dragFrom === index;
+  // La original se oculta desde el hilo de la UI apenas la flotante está
+  // dibujada (no con estado de React: eso redibujaba la tarjeta que tiene el
+  // gesto). 0.01 y no 0: en iPhone una vista con opacidad 0 deja de recibir
+  // el toque.
+  const ocultaStyle = useAnimatedStyle(() => ({
+    opacity: draggingIndexSV.value === index && arrastre.fantasmaListo.value ? 0.01 : 1,
+  }));
 
-    // Compute how much this card should shift to show the insertion point
-    let shiftY = 0;
-    if (!amDragging && dragFrom !== -1 && dragTo !== -1) {
-      if (dragFrom < dragTo && index > dragFrom && index <= dragTo) {
-        shiftY = -ITEM_HEIGHT; // dragging downward — shift these cards up
-      } else if (dragFrom > dragTo && index < dragFrom && index >= dragTo) {
-        shiftY = ITEM_HEIGHT;  // dragging upward — shift these cards down
-      }
+  const shiftSV    = useSharedValue(0);
+  const opacidadSV = useSharedValue(1);
+
+  useAnimatedReaction(() => {
+    const desde = draggingIndexSV.value;
+    const hasta = hoverIndexSV.value;
+    let shift = 0;
+    if (desde !== -1 && hasta !== -1 && desde !== index) {
+      // Las de en medio se corren lo que ocupa la tarjeta arrastrada.
+      const paso = slotDe(medidasSV.value, desde).h + CARD_GAP;
+      if (desde < hasta && index > desde && index <= hasta) shift = -paso;      // para abajo: suben
+      else if (desde > hasta && index < desde && index >= hasta) shift = paso;  // para arriba: bajan
     }
-
-    const isDimmed = dragFrom !== -1 && !amDragging;
-    // Live drag: snappy spring.
-    // Post-drop: withTiming with easeInOut — same curve as LayoutAnimation so they cancel
-    // exactly and the card appears stationary. withSpring has a different easing profile
-    // and can't cancel LayoutAnimation perfectly (causes the visible bounce).
-    const shiftTranslate = amDragging
-      ? cardOffset.value
-      : dragFrom !== -1
-        ? withSpring(shiftY, { damping: 24, stiffness: 300 })
-        : withTiming(shiftY, { duration: 300, easing: Easing.inOut(Easing.ease) });
-    return {
-      transform: [
-        { translateY: shiftTranslate },
-        { scale: withTiming(amDragging ? 1.03 : 1, { duration: 200 }) },
-      ],
-      zIndex:        amDragging ? 100 : 1,
-      opacity:       withTiming(isDimmed ? 0.55 : 1, { duration: 160 }),
-      shadowOpacity: withTiming(amDragging ? 0.40 : 0, { duration: 180 }),
-      shadowRadius:  amDragging ? 18 : 0,
-      shadowColor:   '#000',
-      shadowOffset:  { width: 0, height: 8 },
-      elevation:     amDragging ? 10 : 0,
-    };
+    return { shift, activo: desde !== -1, yo: desde === index };
+  }, (act, prev) => {
+    if (!prev || act.shift !== prev.shift || act.activo !== prev.activo) {
+      // Durante el arrastre, resorte suave. Al terminar (cambió el orden) va a
+      // 0 al instante: la tarjeta ya está en su lugar nuevo.
+      shiftSV.value = act.activo ? withSpring(act.shift, { damping: 22, stiffness: 260, mass: 0.9 }) : act.shift;
+    }
+    const atenuada = act.activo && !act.yo;
+    if (!prev || atenuada !== (prev.activo && !prev.yo)) {
+      opacidadSV.value = withTiming(atenuada ? 0.55 : 1, { duration: 160 });
+    }
   });
 
-  const handleStyle = useAnimatedStyle(() => ({
-    backgroundColor: withTiming(
-      draggingIndexSV.value === index ? colors.primaryDim12 : colors.surfaceContainerHigh,
-      { duration: 200 }
-    ),
+  // Solo transform y opacidad: nada que cambie el layout.
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: shiftSV.value }],
+    opacity:   opacidadSV.value,
   }));
 
   const handleDelete = () => {
@@ -400,62 +726,33 @@ function ExerciseCard({ slot, index, total, colors, styles, onEdit, onDelete, on
   const thumbUri = getExerciseImage(exRef);
   const gifUri   = getExerciseGif(exRef) ?? thumbUri;
 
-  const groupMeta = MUSCLE_GROUPS.find(g => g.id === slot.grupoMuscular);
-
   return (
     <>
-      <Animated.View style={[styles.cardWrap, cardStyle]}>
-        <GestureDetector gesture={dragGesture}>
-          <Animated.View style={[styles.dragHandle, handleStyle]}>
-            <Ionicons name="reorder-three" size={22} color={colors.textTertiary} />
-          </Animated.View>
-        </GestureDetector>
-
-        <View style={styles.cardBody}>
-          <View style={styles.cardTopRow}>
-            {/* Thumbnail — tap to see animated GIF */}
-            <TouchableOpacity style={styles.cardThumb} onPress={() => setGifOpen(true)} activeOpacity={0.8}>
-              <Image source={{ uri: thumbUri }} style={styles.cardThumbImg} resizeMode="contain" />
-            </TouchableOpacity>
-
-            <View style={styles.cardNameWrap}>
-              <Text style={styles.cardName} numberOfLines={1}>{slot.nombre}</Text>
-              {groupMeta && (
-                <View style={styles.cardGroupPill}>
-                  <Text style={styles.cardGroupText}>{groupMeta.label}</Text>
+      {/* Afuera: sin transform, para medir. Mientras se arrastra queda invisible
+          (en su lugar se ve la tarjeta flotante). */}
+      <Animated.View ref={tarjetaRef} onLayout={medir} style={ocultaStyle}>
+        <Animated.View style={[styles.cardWrap, cardStyle]}>
+          <ContenidoTarjeta
+            slot={slot}
+            colors={colors}
+            styles={styles}
+            onThumb={() => setGifOpen(true)}
+            onEdit={onEdit}
+            onDelete={handleDelete}
+            handle={(
+              <GestureDetector gesture={dragGesture}>
+                <View style={[styles.dragHandle, { backgroundColor: colors.surfaceContainerHigh }]}>
+                  <Ionicons name="reorder-three" size={22} color={colors.textTertiary} />
                 </View>
-              )}
-            </View>
-            <View style={styles.cardActions}>
-              <TouchableOpacity style={styles.editBtn} onPress={onEdit} hitSlop={8}>
-                <Ionicons name="create-outline" size={18} color={colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete} hitSlop={8}>
-                <Ionicons name="trash-outline" size={16} color="#E5302A" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.cardMetaRow}>
-            <MetaPill icon="repeat-outline"  label={`${slot.series} series`}     colors={colors} styles={styles} />
-            <MetaPill icon="barbell-outline" label={`${slot.repeticiones} reps`} colors={colors} styles={styles} />
-            {slot.carga != null && (
-              <MetaPill icon="scale-outline" label={`${slot.carga} kg`}          colors={colors} styles={styles} />
+              </GestureDetector>
             )}
-            {slot.descanso && (
-              <MetaPill icon="timer-outline" label={`${slot.descanso}s`}         colors={colors} styles={styles} />
-            )}
-          </View>
-
-          {!!slot.observaciones && (
-            <Text style={styles.cardObs} numberOfLines={1}>{slot.observaciones}</Text>
-          )}
-        </View>
+          />
+        </Animated.View>
       </Animated.View>
 
       {/* GIF preview modal */}
       {gifOpen && (
-        <Modal transparent visible animationType="fade" onRequestClose={() => setGifOpen(false)} statusBarTranslucent>
+        <Modal transparent visible animationType="fade" onRequestClose={() => setGifOpen(false)} statusBarTranslucent navigationBarTranslucent>
           <Pressable style={gifSt.backdrop} onPress={() => setGifOpen(false)}>
             <Pressable style={gifSt.card} onPress={() => {}}>
               <View style={gifSt.imgWrap}>
@@ -520,7 +817,7 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
   if (!mounted) return null;
 
   return (
-    <Modal transparent visible animationType="none" onRequestClose={onDismiss} statusBarTranslucent>
+    <Modal transparent visible animationType="none" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
       {/* Outer Pressable = full-screen backdrop + dismiss handler */}
       <Pressable
         style={[pmSt.backdrop, { backgroundColor: 'rgba(0,0,0,0.72)' }]}
@@ -638,7 +935,7 @@ function ExercisePickerModal({ visible, onDismiss, onSelect, colors }) {
 
       {/* GIF preview — stacks on top of the picker */}
       {gifItem && (
-        <Modal transparent visible animationType="fade" onRequestClose={() => setGifItem(null)} statusBarTranslucent>
+        <Modal transparent visible animationType="fade" onRequestClose={() => setGifItem(null)} statusBarTranslucent navigationBarTranslucent>
           <Pressable style={gifSt.backdrop} onPress={() => setGifItem(null)}>
             <Pressable style={gifSt.card} onPress={() => {}}>
               <View style={gifSt.imgWrap}>
@@ -785,7 +1082,7 @@ function EditExerciseSheet({ slot, onDismiss, onSave, colors }) {
   };
 
   return (
-    <Modal transparent visible animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+    <Modal transparent visible animationType="none" onRequestClose={dismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable
         style={[pmSt.backdrop, { backgroundColor: 'rgba(0,0,0,0.72)' }]}
         onPress={dismiss}
@@ -964,6 +1261,13 @@ function makeStyles(colors) {
     },
 
     // Client name subtitle
+    nombrePlantilla: {
+      marginHorizontal: spacing.lg, marginBottom: spacing.sm,
+      paddingHorizontal: spacing.md, paddingVertical: 10,
+      borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
+      backgroundColor: colors.surfaceContainer,
+      color: colors.text, fontSize: typography.sizes.md, fontWeight: '700',
+    },
     clientName: {
       fontSize: typography.sizes.xs, color: colors.primary,
       fontWeight: '700', letterSpacing: 0.3,
@@ -973,6 +1277,13 @@ function makeStyles(colors) {
 
     // List
     listScroll: { flex: 1 },
+    // Tarjeta flotante mientras se arrastra (encima de la lista, mismo ancho).
+    fantasma: {
+      position: 'absolute', top: 0, left: spacing.lg, right: spacing.lg,
+      zIndex: 100, elevation: 12,
+      shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 18, shadowOffset: { width: 0, height: 8 },
+    },
+    tarjetaOculta: { opacity: 0 },
     listContent: { paddingHorizontal: spacing.lg, paddingTop: 4 },
 
     // Empty state

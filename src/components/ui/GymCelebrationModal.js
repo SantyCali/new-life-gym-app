@@ -84,7 +84,7 @@ export default function GymCelebrationModal({ onClose, xp = 150 }) {
   });
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+    <Modal visible transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent navigationBarTranslucent>
       {/* Overlay tap to dismiss */}
       <Pressable style={StyleSheet.absoluteFill} onPress={dismiss}>
         <Animated.View style={[st.overlay, { opacity: overlayOpacity }]} />

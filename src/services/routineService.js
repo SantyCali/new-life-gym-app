@@ -44,7 +44,12 @@ export function subscribeToClientRoutine(clienteId, onChange) {
   }, () => onChange(null));
 }
 
-export async function saveRoutine({ id, clienteId, entrenadorId, nombre, dias }) {
+// creadaPor: 'entrenador' o 'alumno' (el alumno se arma la suya). Se guarda al
+// crearla: si después la edita otro, no cambia.
+// editadaPor: quién la guardó por última vez ('entrenador' o 'alumno'), para
+// que el entrenador vea si el alumno la cambió.
+// extra: campos adicionales, ej. { plantillaId, plantillaHuella } (ver misRutinasService).
+export async function saveRoutine({ id, clienteId, entrenadorId, nombre, dias, creadaPor = 'entrenador', editadaPor = creadaPor, extra = {} }) {
   const routineId = id ?? uid();
   const data = {
     id:            routineId,
@@ -53,8 +58,13 @@ export async function saveRoutine({ id, clienteId, entrenadorId, nombre, dias })
     nombre:        nombre ?? 'Rutina',
     dias:          dias   ?? [],
     actualizadoEn: serverTimestamp(),
+    editadaPor,
+    ...extra,
   };
-  if (!id) data.creadoEn = serverTimestamp();
+  if (!id) {
+    data.creadoEn = serverTimestamp();
+    data.creadaPor = creadaPor;
+  }
   await setDoc(doc(db, ROUTINES_COL, routineId), data, { merge: true });
   return routineId;
 }

@@ -10,8 +10,11 @@ export async function saveStepsToFirebase(uid, date, steps) {
     const ref = doc(db, 'users', uid, 'stepsHistory', date);
     const existing = await getDoc(ref);
     const prevSteps = existing.exists() ? (existing.data().steps ?? 0) : 0;
+    // merge: el documento del día también guarda cuántos puntos ya se
+    // acreditaron por esos pasos (xpOtorgado, ver stepRewardsService). Pisarlo
+    // entero borraba ese registro y habilitaba a acreditarlos de nuevo.
     if (steps >= prevSteps) {
-      await setDoc(ref, { date, steps });
+      await setDoc(ref, { date, steps }, { merge: true });
     }
   } catch {}
 }

@@ -1,12 +1,10 @@
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { guardarPerfil } from './perfilPrivadoService';
 
 // Always stores peso in kg internally.
 // pesoUnidad is stored only as display preference.
 export async function saveBodyMeasurements(uid, updates) {
   if (!uid) return;
-  const ref = doc(db, 'users', uid);
-  await updateDoc(ref, updates);
+  await guardarPerfil(uid, updates);
 }
 
 // Build fechaNacimiento string from a year, keeping day/month if already stored.

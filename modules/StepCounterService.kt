@@ -18,6 +18,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.util.Calendar
+import org.json.JSONObject
 
 class StepCounterService : Service(), SensorEventListener {
 
@@ -42,6 +43,12 @@ class StepCounterService : Service(), SensorEventListener {
         // subido a Firestore — ver stashPendingSync().
         const val KEY_PENDING_SYNC_DATE  = "pendingSyncDate"
         const val KEY_PENDING_SYNC_STEPS = "pendingSyncSteps"
+        // Totales finales de los últimos días cerrados, como JSON
+        // {"2026-09-24": 8123, ...}. El slot único de arriba se pisaba si pasaban
+        // dos medianoches sin que nadie lo subiera (celular apagado, sistema que
+        // no dejó correr la tarea): con el historial no se pierde ningún día.
+        const val KEY_DAILY_HISTORY = "dailyHistory"
+        const val HISTORY_MAX_DAYS  = 14
         const val ACTION_UPDATE_NOTIF     = "NLG_UPDATE_NOTIFICATION"
         // Disparada por el deleteIntent de la notificación cuando el usuario la desliza.
         const val ACTION_NOTIF_DISMISSED  = "NLG_NOTIF_DISMISSED"
@@ -311,7 +318,24 @@ class StepCounterService : Service(), SensorEventListener {
         prefs.edit()
             .putString(KEY_PENDING_SYNC_DATE, outgoingDate)
             .putInt(KEY_PENDING_SYNC_STEPS, outgoingSteps)
+            .putString(KEY_DAILY_HISTORY, historyWith(outgoingDate, outgoingSteps))
             .apply()
+    }
+
+    // Agrega (o mejora) el total de un día al historial y descarta lo más
+    // viejo. Las fechas son "YYYY-MM-DD", así que ordenarlas como texto es
+    // ordenarlas por fecha.
+    private fun historyWith(date: String, steps: Int): String {
+        val history = try {
+            JSONObject(prefs.getString(KEY_DAILY_HISTORY, "{}") ?: "{}")
+        } catch (e: Exception) {
+            JSONObject()
+        }
+        if (steps > history.optInt(date, 0)) history.put(date, steps)
+
+        val dates = history.keys().asSequence().toList().sorted()
+        dates.dropLast(HISTORY_MAX_DAYS).forEach { history.remove(it) }
+        return history.toString()
     }
 
     private fun saveData() {

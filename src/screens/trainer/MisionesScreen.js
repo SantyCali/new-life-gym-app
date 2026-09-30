@@ -147,6 +147,8 @@ export default function MisionesScreen({ navigation }) {
         transparent
         animationType="slide"
         onRequestClose={() => setModalVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -157,7 +159,7 @@ export default function MisionesScreen({ navigation }) {
             activeOpacity={1}
             onPress={() => setModalVisible(false)}
           />
-          <View style={[styles.modalSheet, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.background, borderColor: colors.border }, Platform.OS === 'android' && { paddingBottom: spacing.xl + insets.bottom }]}>
             <View style={[styles.handle, { backgroundColor: colors.border }]} />
             <Text style={[styles.modalTitle, { color: colors.text }]}>Nueva Misión</Text>
 

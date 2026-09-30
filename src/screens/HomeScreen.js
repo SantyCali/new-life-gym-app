@@ -8,12 +8,12 @@ import {
   ImageBackground,
   Image,
 } from 'react-native';
+import { useEspacioBarra } from '../navigation/PremiumTabBar';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withSpring,
   interpolate, runOnJS, Extrapolation,
 } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
 import { useTheme } from '../context/ThemeContext';
 import ProgressRing from '../components/ui/ProgressRing';
-import { todayStats, todayWorkout } from '../constants/mockData';
+import { todayWorkout } from '../constants/mockData';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import GoalModal from '../components/ui/GoalModal';
@@ -31,10 +31,11 @@ import { subscribeToClientRoutine } from '../services/routineService';
 import { subscribeToAnnouncement } from '../services/announcementService';
 import { MUSCLE_GROUPS } from '../constants/exercises';
 import { useStepContext } from '../context/StepContext';
-import { calcCalories, calcGymCalories, computeAge } from '../services/stepService';
+import { calcCalories, calcGymCalories, computeAge, localDateString } from '../services/stepService';
 import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
 import { XP_GYM_VISIT } from '../services/gamificationService';
+import EnSalaCard from '../components/ui/EnSalaCard';
 import { useGymEvents } from '../context/GymEventsContext';
 
 const DAY_ABBR = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
@@ -43,12 +44,14 @@ const RING_RADIUS = 108;
 const RING_STROKE = 16;
 
 export default function HomeScreen({ navigation }) {
+  // Espacio al final para que la barra flotante no tape lo último.
+  const espacioBarra = useEspacioBarra();
   const { theme: { colors, isDark } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, isTrainer } = useAuth();
   const { profile } = useUserProfile();
-  const { steps: realSteps, totalCalories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading } = useStepContext();
-  const { activeCount: gymCount } = useGymCheckins();
+  const { steps: realSteps, totalCalories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading, goal, setGoal: guardarMeta } = useStepContext();
+  const { activeCount: gymCount, ingresosHoy: gymIngresosHoy } = useGymCheckins();
 
   const weightKgHome = profile?.peso   ? Number(profile.peso)   : 70;
   const heightCmHome  = profile?.altura ? Number(profile.altura) : 170;
@@ -106,16 +109,15 @@ export default function HomeScreen({ navigation }) {
     return () => clearTimeout(animTimerRef.current);
   }, [realSteps, dayOffset, stepsLoading]);
 
-  const [goal, setGoal]                     = useState(todayStats.stepsGoal);
+  // La meta es la del perfil (StepContext): es la misma que usan la racha y
+  // los puntos. Antes esta pantalla la guardaba solo en el celular.
   const [goalInput, setGoalInput]           = useState('');
   const [goalModalVisible, setGoalModal]    = useState(false);
 
   const saveGoal = useCallback((n) => {
-    const clamped = Math.max(1000, Math.min(50000, n));
-    setGoal(clamped);
-    AsyncStorage.setItem('dailyStepGoal', String(clamped));
+    guardarMeta(n);
     setGoalModal(false);
-  }, []);
+  }, [guardarMeta]);
 
   const firstName    = profile?.nombre    ?? 'Atleta';
   const streakDays   = profile?.racha     ?? 0;
@@ -147,7 +149,7 @@ export default function HomeScreen({ navigation }) {
 
   const displaySteps = dayOffset === 0
     ? animSteps
-    : (historyMap[getOffsetDate(dayOffset).toISOString().split('T')[0]] ?? 0);
+    : (historyMap[localDateString(getOffsetDate(dayOffset))] ?? 0);
 
   const displayPercent = Math.min(100, Math.round((displaySteps / goal) * 100));
 
@@ -235,13 +237,14 @@ export default function HomeScreen({ navigation }) {
 
   const displayCalories = baseCalories + calcGymCalories(weightKgHome, gymMinHoy, ageYearsHome);
 
-  const [routine, setRoutine] = useState(null);
+  const [routine, setRoutine] = useState(undefined); // undefined = cargando, null = sin rutina
   useEffect(() => {
     if (!user?.uid) return;
     return subscribeToClientRoutine(user.uid, setRoutine);
   }, [user?.uid]);
 
   const todayDay = routine?.dias?.[profile?.gymRoutineDayIndex ?? 0];
+  const cargandoRutina = routine === undefined;
   const todayMuscleGroups = useMemo(() => {
     const exs = todayDay?.ejercicios ?? [];
     return [...new Set(exs.map(e => {
@@ -257,12 +260,8 @@ export default function HomeScreen({ navigation }) {
   const [annEditOpen,  setAnnEditOpen]    = useState(false);
   useEffect(() => subscribeToAnnouncement(setAnnouncement), []);
 
-  // Load goal from storage on focus (but don't restart ring animation needlessly)
   useFocusEffect(
     useCallback(() => {
-      AsyncStorage.getItem('dailyStepGoal').then(v => {
-        if (v) setGoal(Number(v));
-      });
       setReplayKey(k => k + 1);
     }, [])
   );
@@ -280,7 +279,7 @@ export default function HomeScreen({ navigation }) {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: espacioBarra }]}
       >
         {/* ── Header ── */}
         <View style={styles.header}>
@@ -494,20 +493,9 @@ export default function HomeScreen({ navigation }) {
         </View>
 
         {/* ── Gym en vivo ── */}
-        <TouchableOpacity
-          activeOpacity={0.82}
-          onPress={() => navigation.navigate('Gym')}
-          style={[styles.gymCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        >
-          <View style={[styles.gymCircle, { backgroundColor: gymStatusColor(gymCount) + '22', borderColor: gymStatusColor(gymCount) }]}>
-            <Text style={[styles.gymCircleCount, { color: gymStatusColor(gymCount) }]}>{gymCount}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.gymCardTitle, { color: colors.text }]}>En el gym ahora</Text>
-            <Text style={[styles.gymCardSub, { color: colors.textSecondary }]}>{gymStatusLabel(gymCount)}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-        </TouchableOpacity>
+        <View style={{ marginBottom: spacing.xl }}>
+          <EnSalaCard cantidad={gymCount} ingresosHoy={isTrainer ? gymIngresosHoy : null} onPress={() => navigation.navigate('Gym')} />
+        </View>
 
         {/* ── Entrenamiento de hoy ── */}
         <View style={styles.sectionHeader}>
@@ -516,7 +504,7 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.sectionSub}>
               {todayDay
                 ? `Hoy estás en tu día ${todayDay.numero} de ${todayDayTitle}`
-                : 'Cargando rutina...'}
+                : cargandoRutina ? 'Cargando rutina...' : 'Armala vos o pedísela a tu entrenador'}
             </Text>
           </View>
         </View>
@@ -536,24 +524,30 @@ export default function HomeScreen({ navigation }) {
               start={{ x: 0, y: 0 }}
               end={{ x: 0, y: 1 }}
             >
-              <View style={styles.workoutMeta}>
-                <View style={styles.durationChip}>
-                  <Ionicons name="body-outline" size={11} color={colors.textSecondary} />
-                  <Text style={styles.durationText}>
-                    {todayDay ? todayMuscleGroups.slice(0, 2).join(' · ') : todayWorkout.type}
-                  </Text>
+              {todayDay && (
+                <View style={styles.workoutMeta}>
+                  <View style={styles.durationChip}>
+                    <Ionicons name="body-outline" size={11} color={colors.textSecondary} />
+                    <Text style={styles.durationText}>
+                      {todayMuscleGroups.slice(0, 2).join(' · ')}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              )}
+              {/* Sin rutina no se inventa una: antes mostraba "Cardio de Alta
+                  Intensidad" (dato de ejemplo) como si estuviera asignada. */}
               <Text style={styles.workoutTitle}>
-                {todayDay ? `Día ${todayDay.numero}: ${todayDayTitle}` : todayWorkout.title}
+                {todayDay
+                  ? `Día ${todayDay.numero}: ${todayDayTitle}`
+                  : cargandoRutina ? '' : 'Todavía no tenés rutina'}
               </Text>
               <TouchableOpacity
                 style={styles.workoutBtn}
                 onPress={() => navigation.navigate('Rutina')}
                 activeOpacity={0.85}
               >
-                <Ionicons name="play" size={14} color={colors.textInverse} style={{ marginRight: 6 }} />
-                <Text style={styles.workoutBtnText}>Comenzar Entrenamiento</Text>
+                <Ionicons name={todayDay || cargandoRutina ? 'play' : 'barbell-outline'} size={14} color={colors.textInverse} style={{ marginRight: 6 }} />
+                <Text style={styles.workoutBtnText}>{todayDay || cargandoRutina ? 'Comenzar Entrenamiento' : 'Armar mi rutina'}</Text>
               </TouchableOpacity>
             </LinearGradient>
           </ImageBackground>
@@ -583,20 +577,7 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-function gymStatusColor(count) {
-  if (count === 0)  return '#6B7280';
-  if (count <= 14)  return '#22C55E';
-  if (count <= 21)  return '#EAB308';
-  return '#EF4444';
-}
 
-function gymStatusLabel(count) {
-  if (count === 0) return 'Sin gente por ahora';
-  if (count === 1) return '1 persona · Tranquilo';
-  if (count <= 14) return `${count} personas · Tranquilo`;
-  if (count <= 21) return `${count} personas · Moderado`;
-  return `${count} personas · Lleno`;
-}
 
 function StatCard({ icon, value, unit, label, iconColor, highlighted, highlightColor }) {
   const { theme: { colors } } = useTheme();

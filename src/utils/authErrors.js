@@ -11,6 +11,7 @@ const ERROR_MESSAGES = {
   'auth/network-request-failed': 'Error de conexión. Revisá tu internet.',
   'auth/user-disabled': 'Esta cuenta fue deshabilitada.',
   'auth/requires-recent-login': 'Necesitás volver a iniciar sesión para hacer esto.',
+  'app/dni-en-uso': 'Ese DNI ya tiene una cuenta. Si es tuyo, avisale al gimnasio.',
 };
 
 export function mapAuthError(error) {

@@ -1,4 +1,7 @@
-import { useMemo, useEffect, useRef, useState } from 'react';
+import { useMemo, useEffect, useState, useCallback, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { fetchWeeklyStepHistory } from '../services/userService';
+import { localDateString } from '../services/stepService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
@@ -11,10 +14,12 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { useEspacioBarra } from '../navigation/PremiumTabBar';
+import { doc, updateDoc, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
+import * as Haptics from 'expo-haptics';
 import Animated, {
-  useSharedValue, useAnimatedStyle, withTiming,
+  useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS,
   withRepeat, withSequence, Easing,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,7 +31,7 @@ import { stepMilestones } from '../constants/mockData';
 import { useStepContext } from '../context/StepContext';
 import useUserProfile from '../hooks/useUserProfile';
 import useAuth from '../hooks/useAuth';
-import { awardXPAndCoins } from '../services/gamificationService';
+import { estadoLogro, completarLogro } from '../services/logrosService';
 import { useGymEvents } from '../context/GymEventsContext';
 import { LOGROS_DEF } from '../constants/logros';
 
@@ -36,44 +41,85 @@ const INSPIRATION_IMG =
   'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&q=80';
 
 export default function RetosScreen({ navigation }) {
+  // Espacio al final para que la barra flotante no tape lo último.
+  const espacioBarra = useEspacioBarra();
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { steps: currentSteps } = useStepContext();
+  const { steps: currentSteps, goal } = useStepContext();
   const { profile } = useUserProfile();
   const { user, isTester } = useAuth();
   useGymEvents(); // mantiene contexto activo
-  const awardedRef = useRef(new Set());
   const [logroPicker, setLogroPicker] = useState(false);
 
-  const completados = useMemo(
-    () => new Set(profile?.logrosCompletados ?? []),
-    [profile?.logrosCompletados],
-  );
-
-  const logros = useMemo(() => LOGROS_DEF.map(def => ({
-    ...def,
-    progress:    def.getProgress(profile),
-    isCompleted: completados.has(def.id),
-  })), [profile, completados]);
-
-  // Detecta logros recién completados y otorga XP (una sola vez)
+  // Reloj propio para que, pasados los 5 minutos en verde, el logro vuelva a
+  // mostrarse desde cero sin tener que salir y entrar de la pantalla.
+  const [ahora, setAhora] = useState(() => Date.now());
   useEffect(() => {
-    if (!user?.uid || !profile) return;
-    logros.forEach(async (l) => {
-      if (l.progress < l.total) return;
-      if (l.isCompleted) return;
-      if (awardedRef.current.has(l.id)) return;
-      awardedRef.current.add(l.id);
-      await awardXPAndCoins(user.uid, l.xp);
-      await updateDoc(doc(db, 'users', user.uid), {
-        logrosCompletados: arrayUnion(l.id),
-      });
-      // El modal se dispara automáticamente en todos los dispositivos via GymEventsContext → Firestore onSnapshot
-    });
-  }, [logros, user?.uid, profile]);
+    const id = setInterval(() => setAhora(Date.now()), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Cobrarlos lo hace GymEventsContext (siempre montado); acá solo se muestran.
+  const logros = useMemo(() => LOGROS_DEF.map((def) => {
+    const { progreso, completado } = estadoLogro(def, profile, ahora);
+    return { ...def, progress: progreso, isCompleted: completado };
+  }), [profile, ahora]);
+  // Hitos de días anteriores: 0 = hoy, -1 = ayer, … hasta 7 días atrás.
+  const DIAS_ATRAS = 7;
+  const [dia, setDia] = useState(0);
+  const [historial, setHistorial] = useState({});
+  useFocusEffect(useCallback(() => {
+    if (!user?.uid) return;
+    fetchWeeklyStepHistory(user.uid).then(setHistorial).catch(() => {});
+  }, [user?.uid]));
+  const fechaDia = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + dia);
+    return d;
+  }, [dia]);
+  const pasosDia = dia === 0 ? currentSteps : (historial[localDateString(fechaDia)] ?? 0);
+  const nombreDia = dia === 0 ? 'Hoy'
+    : dia === -1 ? 'Ayer'
+    : fechaDia.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '');
+
   const maxSteps = stepMilestones[stepMilestones.length - 1].steps;
-  const progressPercent = Math.min((currentSteps / maxSteps) * 100, 100);
-  const nextMilestone = stepMilestones.find((m) => m.steps > currentSteps);
+  const progressPercent = Math.min((pasosDia / maxSteps) * 100, 100);
+  const nextMilestone = stepMilestones.find((m) => m.steps > pasosDia);
+  const hitosLogrados = stepMilestones.filter((m) => pasosDia >= m.steps).length;
+
+  // Cambio de día animado: lo de ahora sale deslizándose hacia un costado y el
+  // otro día entra desde el lado contrario (hacia atrás entra desde la
+  // izquierda, como pasar páginas). La barra se llena hasta los pasos del día.
+  const deslizSV = useSharedValue(0);
+  const opacSV   = useSharedValue(1);
+  const llenoSV  = useSharedValue(0);
+  const diaRef   = useRef(0);
+  const entradaRef = useRef(0);
+  const cambiarDia = useCallback((delta) => {
+    const nuevo = Math.max(-DIAS_ATRAS, Math.min(0, diaRef.current + delta));
+    if (nuevo === diaRef.current) return;
+    diaRef.current = nuevo;
+    Haptics.selectionAsync().catch(() => {});
+    const sale = delta < 0 ? 36 : -36;
+    entradaRef.current = -sale;
+    opacSV.value = withTiming(0, { duration: 130 });
+    deslizSV.value = withTiming(sale, { duration: 130 }, (ok) => {
+      if (ok) runOnJS(setDia)(nuevo);
+    });
+  }, []);
+  useEffect(() => {
+    if (!entradaRef.current) return;
+    deslizSV.value = entradaRef.current;
+    entradaRef.current = 0;
+    deslizSV.value = withSpring(0, { damping: 18, stiffness: 220, mass: 0.8 });
+    opacSV.value = withTiming(1, { duration: 200 });
+  }, [dia]);
+  useEffect(() => {
+    llenoSV.value = withTiming(progressPercent, { duration: 550 });
+  }, [progressPercent]);
+  const diaStyle   = useAnimatedStyle(() => ({ opacity: opacSV.value, transform: [{ translateX: deslizSV.value }] }));
+  const nombreStyle = useAnimatedStyle(() => ({ opacity: opacSV.value, transform: [{ translateX: deslizSV.value * 0.4 }] }));
+  const llenoStyle = useAnimatedStyle(() => ({ width: `${llenoSV.value}%` }));
 
   const screenOpacity = useSharedValue(0);
   const screenStyle   = useAnimatedStyle(() => ({ flex: 1, opacity: screenOpacity.value }));
@@ -100,7 +146,7 @@ export default function RetosScreen({ navigation }) {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: espacioBarra }]}
       >
         {/* ── Header ── */}
         <View style={styles.header}>
@@ -135,25 +181,43 @@ export default function RetosScreen({ navigation }) {
         {/* ── Progreso Diario: Hitos de Pasos ── */}
         <View style={styles.section}>
           <Text style={styles.sectionMeta}>PROGRESO DIARIO</Text>
-          <Text style={styles.sectionTitle}>Hitos de Pasos</Text>
+          <View style={styles.hitosTitulo}>
+            <Text style={styles.sectionTitle}>Hitos de Pasos</Text>
+            {/* Ver los hitos de los días anteriores */}
+            <View style={styles.hitosNav}>
+              <TouchableOpacity
+                onPress={() => cambiarDia(-1)}
+                disabled={dia <= -DIAS_ATRAS}
+                hitSlop={10}
+                style={{ opacity: dia <= -DIAS_ATRAS ? 0.25 : 1 }}
+              >
+                <Ionicons name="chevron-back" size={20} color={colors.textTertiary} />
+              </TouchableOpacity>
+              <Animated.Text style={[styles.hitosDia, { color: colors.textSecondary }, nombreStyle]}>{nombreDia}</Animated.Text>
+              <TouchableOpacity
+                onPress={() => cambiarDia(1)}
+                disabled={dia >= 0}
+                hitSlop={10}
+                style={{ opacity: dia >= 0 ? 0.25 : 1 }}
+              >
+                <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
+          </View>
 
+          <Animated.View style={diaStyle}>
           {/* Barra de hitos */}
           <View style={styles.milestonesContainer}>
             <View style={styles.milestoneBar}>
               <View style={styles.milestoneTrack} />
-              <View
-                style={[
-                  styles.milestoneFill,
-                  { width: `${progressPercent}%` },
-                ]}
-              />
+              <Animated.View style={[styles.milestoneFill, llenoStyle]} />
               {stepMilestones.map((m) => {
                 const pos = Math.min((m.steps / maxSteps) * 100, 100);
-                const reached = currentSteps >= m.steps;
+                const reached = pasosDia >= m.steps;
                 const isCurrent =
-                  currentSteps >= m.steps &&
+                  pasosDia >= m.steps &&
                   (!nextMilestone || m.steps < nextMilestone.steps ||
-                    !stepMilestones.find((mm) => mm.steps > m.steps && currentSteps < mm.steps));
+                    !stepMilestones.find((mm) => mm.steps > m.steps && pasosDia < mm.steps));
                 return (
                   <View
                     key={m.steps}
@@ -177,7 +241,7 @@ export default function RetosScreen({ navigation }) {
                   key={m.steps}
                   style={[
                     styles.milestoneLabel,
-                    currentSteps >= m.steps && styles.milestoneLabelReached,
+                    pasosDia >= m.steps && styles.milestoneLabelReached,
                   ]}
                 >
                   {m.label}
@@ -188,19 +252,30 @@ export default function RetosScreen({ navigation }) {
 
           <View style={styles.stepsDisplay}>
             <Text style={styles.stepsCount}>
-              {currentSteps.toLocaleString('es-AR')}
+              {pasosDia.toLocaleString('es-AR')}
             </Text>
-            <Text style={styles.stepsUnit}>pasos hoy</Text>
+            <Text style={styles.stepsUnit}>{dia === 0 ? 'pasos hoy' : `pasos · ${nombreDia}`}</Text>
           </View>
 
-          {nextMilestone && (
-            <Text style={styles.motivText}>
-              ¡Casi llegás al gran premio de hoy!{' '}
-              <Text style={{ color: colors.primary }}>
-                {(nextMilestone.steps - currentSteps).toLocaleString('es-AR')} pasos más
-              </Text>
-            </Text>
-          )}
+          {/* "¡Casi llegás!" solo cuando de verdad falta poco. */}
+          <Text style={styles.motivText}>
+            {dia < 0 ? (
+              hitosLogrados === 0
+                ? 'Ese día no llegaste a ningún premio.'
+                : hitosLogrados === stepMilestones.length
+                  ? '¡Ese día ganaste todos los premios!'
+                  : <>Ese día ganaste <Text style={{ color: colors.primary }}>{hitosLogrados} de {stepMilestones.length}</Text> premios.</>
+            ) : nextMilestone ? (
+              <>
+                {nextMilestone.steps - pasosDia <= 1000 ? '¡Casi llegás! Te faltan ' : 'Te faltan '}
+                <Text style={{ color: colors.primary }}>
+                  {(nextMilestone.steps - pasosDia).toLocaleString('es-AR')} pasos
+                </Text>
+                {` para el premio de ${nextMilestone.label}`}
+              </>
+            ) : '¡Ganaste todos los premios de hoy!'}
+          </Text>
+          </Animated.View>
         </View>
 
         {/* ── Logros ── */}
@@ -221,10 +296,10 @@ export default function RetosScreen({ navigation }) {
                     const raw = await AsyncStorage.getItem('tester_xp_snap');
                     if (raw) {
                       const snap = JSON.parse(raw);
-                      await updateDoc(doc(db, 'users', user.uid), snap);
+                      await updateDoc(doc(db, 'users', user.uid), { ...snap, sinAutoReparar: deleteField() });
                       await AsyncStorage.removeItem('tester_xp_snap'); // limpiar para la próxima sesión
                     } else {
-                      await updateDoc(doc(db, 'users', user.uid), { nivelJuego: 1, xp: 0, xpTotal: 0, gymVisitCount: 0, logrosCompletados: [] });
+                      await updateDoc(doc(db, 'users', user.uid), { nivelJuego: 1, xp: 0, xpTotal: 0, xpExtra: 0, gymVisitCount: 0, logros: {}, logrosCompletados: [], sinAutoReparar: true });
                     }
                   }}
                   style={{ backgroundColor: '#92400e', borderRadius: 8, paddingVertical: 5, paddingHorizontal: 10 }}
@@ -255,11 +330,9 @@ export default function RetosScreen({ navigation }) {
               La disciplina supera al talento
             </Text>
             <Text style={styles.inspirationSub}>
-              Seguí así, estás a solo{' '}
-              {nextMilestone
-                ? (nextMilestone.steps - currentSteps).toLocaleString('es-AR')
-                : '0'}{' '}
-              pasos de tu meta diaria.
+              {currentSteps >= goal
+                ? '¡Ya cumpliste tu meta de hoy! Seguí sumando.'
+                : `Seguí así, estás a ${(goal - currentSteps).toLocaleString('es-AR')} pasos de tu meta diaria.`}
             </Text>
           </LinearGradient>
         </ImageBackground>
@@ -268,7 +341,7 @@ export default function RetosScreen({ navigation }) {
       </ScrollView>
 
       {/* ── Picker tester: Forzar Logro ── */}
-      <Modal visible={logroPicker} transparent animationType="fade" onRequestClose={() => setLogroPicker(false)} statusBarTranslucent>
+      <Modal visible={logroPicker} transparent animationType="fade" onRequestClose={() => setLogroPicker(false)} statusBarTranslucent navigationBarTranslucent>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setLogroPicker(false)}>
           <Pressable style={{ backgroundColor: '#1a1a1a', borderRadius: 18, width: 300, overflow: 'hidden' }} onPress={() => {}}>
             {/* Header */}
@@ -292,14 +365,14 @@ export default function RetosScreen({ navigation }) {
                       await AsyncStorage.setItem('tester_xp_snap', JSON.stringify({
                         xp: profile.xp ?? 0,
                         xpTotal: profile.xpTotal ?? 0,
+                        xpExtra: profile.xpExtra ?? 0,
                         nivelJuego: profile.nivelJuego ?? 1,
                         gymVisitCount: profile.gymVisitCount ?? 0,
-                        logrosCompletados: profile.logrosCompletados ?? [],
+                        logros: profile.logros ?? {},
                       }));
                     }
                   }
-                  await awardXPAndCoins(user.uid, l.xp);
-                  await updateDoc(doc(db, 'users', user.uid), { logrosCompletados: arrayUnion(l.id) });
+                  await completarLogro(user.uid, l, { forzar: true });
                   // Modal se dispara via Firestore onSnapshot en todos los dispositivos
                 }}
                 activeOpacity={0.7}
@@ -434,6 +507,9 @@ function makeStyles(colors) { return StyleSheet.create({
     letterSpacing: 1.5,
     marginBottom: 4,
   },
+  hitosTitulo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  hitosNav:    { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  hitosDia:    { fontSize: 12, fontWeight: '700', minWidth: 74, textAlign: 'center', textTransform: 'capitalize' },
   sectionTitle: {
     fontSize: typography.sizes.xl,
     fontWeight: typography.weights.black,

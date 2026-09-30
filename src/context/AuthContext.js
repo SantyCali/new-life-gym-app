@@ -9,6 +9,7 @@ import {
   registerWithEmail,
   loginWithEmail,
   logout as logoutService,
+  deleteAccount as deleteAccountService,
 } from '../services/authService';
 
 export const AuthContext = createContext(null);
@@ -125,6 +126,20 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const deleteAccount = useCallback(async (password) => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await deleteAccountService(password);
+      await AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+    } catch (error) {
+      setAuthError(error.message);
+      throw error;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
   const clearAuthError = useCallback(() => setAuthError(null), []);
 
   const value = {
@@ -138,6 +153,7 @@ export function AuthProvider({ children }) {
     signUp,
     signIn,
     signOut,
+    deleteAccount,
     clearAuthError,
   };
 

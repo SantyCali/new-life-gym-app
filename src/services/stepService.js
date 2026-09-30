@@ -1,6 +1,7 @@
 import { Platform, Linking } from 'react-native';
 import { Pedometer } from 'expo-sensors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 // HC install status values (used across the app)
 export const HC_STATUS = {
@@ -52,6 +53,49 @@ export function computeAge(fechaNacimiento) {
   } catch { return 30; }
 }
 
+// ── iOS: app Salud (HealthKit) ────────────────────────────────────────────────
+// Salud junta los pasos del iPhone y del Apple Watch sin contarlos dos veces
+// (el sensor del iPhone solo, CMPedometer, no ve los del reloj: con reloj daba
+// ~7 mil contra ~9 mil de Salud). Se usa lo que diga Salud, y el sensor queda
+// de respaldo: iOS no avisa si el usuario negó el permiso (Salud devuelve 0),
+// y con el celular bloqueado Salud no se puede leer. Por eso siempre se toma
+// el mayor de los dos. En Expo Go el módulo no existe: solo sensor.
+
+const PASOS_SALUD = 'HKQuantityTypeIdentifierStepCount';
+let saludMod;
+function salud() {
+  if (saludMod !== undefined) return saludMod;
+  saludMod = null;
+  if (Platform.OS !== 'ios' || Constants.executionEnvironment === 'storeClient') return null;
+  try {
+    const hk = require('@kingstinct/react-native-healthkit');
+    if (hk.isHealthDataAvailable()) saludMod = hk;
+  } catch {}
+  return saludMod;
+}
+
+// Pide permiso para leer los pasos de Salud (el cartel de iOS sale una sola
+// vez; después no hace nada). Solo desde la app abierta, nunca en segundo plano.
+export async function pedirPermisoSalud() {
+  const hk = salud();
+  if (!hk) return false;
+  try { return await hk.requestAuthorization({ toRead: [PASOS_SALUD] }); } catch { return false; }
+}
+
+// Pasos de Salud entre dos fechas, o null si no se pudo leer.
+async function pasosDeSalud(desde, hasta) {
+  const hk = salud();
+  if (!hk) return null;
+  try {
+    const r = await hk.queryStatisticsForQuantity(PASOS_SALUD, ['cumulativeSum'], {
+      filter: { date: { startDate: desde, endDate: hasta } },
+      unit: 'count',
+    });
+    const n = r?.sumQuantity?.quantity;
+    return typeof n === 'number' ? Math.round(n) : 0;
+  } catch { return null; }
+}
+
 // ── iOS: expo-sensors CMPedometer ─────────────────────────────────────────────
 
 // Request motion/activity permission before using the pedometer (Android 10+ requires it)
@@ -66,10 +110,16 @@ export async function isPedometerAvailable() {
   try { return await Pedometer.isAvailableAsync(); } catch { return false; }
 }
 
-// Returns steps from midnight to now (iOS only via CMPedometer)
+// Pasos de hoy en iPhone: el mayor entre Salud y el sensor (ver arriba).
 export async function getStepsSinceMidnight() {
-  const result = await Pedometer.getStepCountAsync(midnightToday(), new Date());
-  return result.steps ?? 0;
+  const desde = midnightToday();
+  const hasta = new Date();
+  const [sensor, deSalud] = await Promise.all([
+    Pedometer.getStepCountAsync(desde, hasta).then((r) => r.steps ?? 0).catch(() => null),
+    pasosDeSalud(desde, hasta),
+  ]);
+  if (sensor == null && deSalud == null) throw new Error('sin pasos');
+  return Math.max(sensor ?? 0, deSalud ?? 0);
 }
 
 export function watchStepCount(callback) {
@@ -184,10 +234,12 @@ export async function getStepsForDate(date) {
   to.setHours(0, 0, 0, 0);
 
   if (Platform.OS === 'ios') {
-    try {
-      const result = await Pedometer.getStepCountAsync(from, to);
-      return result.steps ?? 0;
-    } catch { return null; }
+    const [sensor, deSalud] = await Promise.all([
+      Pedometer.getStepCountAsync(from, to).then((r) => r.steps ?? 0).catch(() => null),
+      pasosDeSalud(from, to),
+    ]);
+    if (sensor == null && deSalud == null) return null;
+    return Math.max(sensor ?? 0, deSalud ?? 0);
   }
   // Android: delegate to HC (returns null if HC unavailable)
   return getStepsFromHC(from, to);

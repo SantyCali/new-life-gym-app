@@ -1,0 +1,296 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Quién es quién ──────────────────────────────────────────────────────
+    // El control de acceso (Apps Script) escribe con una cuenta de servicio de
+    // Google: esas escrituras no pasan por estas reglas.
+
+    function logueado() {
+      return request.auth != null;
+    }
+
+    function miPerfil() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // `rol` es texto separado por comas ("entrenador, tester") o una lista,
+    // igual que lo interpretan la app y el panel web.
+    function tieneRol(nombre) {
+      let rol = miPerfil().get('rol', '');
+      return (rol is list && rol.hasAny([nombre]))
+        || (rol is string && rol.matches('(^|.*[, ])' + nombre + '([, ].*|$)'));
+    }
+
+    function esEntrenador() {
+      return logueado() && tieneRol('entrenador');
+    }
+
+    function esMio(uid) {
+      return logueado() && request.auth.uid == uid;
+    }
+
+    // ── Protección de puntos (versión vieja de la app) ──────────────────────
+
+    // Rol "tester" sobre su PROPIA cuenta: los botones de prueba (+400 XP,
+    // Forzar, Reset) necesitan poder volver los datos atrás.
+    function esTesterEnSuCuenta(uid) {
+      return esMio(uid) && tieneRol('tester');
+    }
+
+    // Los puntos totales y las visitas al gym nunca bajan de forma legítima.
+    // La versión vieja de la app los pone en 0 cinco minutos después de dar
+    // un logro: esa escritura se rechaza y no se pierde nada.
+    function noBajaContadores(uid) {
+      return (request.resource.data.get('xpTotal', 0) >= resource.data.get('xpTotal', 0)
+          && request.resource.data.get('gymVisitCount', 0) >= resource.data.get('gymVisitCount', 0))
+        || esTesterEnSuCuenta(uid);
+    }
+
+    // Un logro nunca sale de logrosCompletados. La versión vieja lo saca en la
+    // misma escritura en que borra el dato (puntos, visitas o racha).
+    function noSacaLogros(uid) {
+      return request.resource.data.get('logrosCompletados', []).hasAll(resource.data.get('logrosCompletados', []))
+        || esTesterEnSuCuenta(uid);
+    }
+
+    function noCambiaRol() {
+      return request.resource.data.get('rol', 'usuario') == resource.data.get('rol', 'usuario');
+    }
+
+    // Premio de un torneo: el creador, al finalizarlo, les suma puntos a los
+    // ganadores (hasta 500). Solo puede tocar los campos de puntos y solo
+    // puede subirlos.
+    function esPremioDeTorneo() {
+      let suma = request.resource.data.get('xpTotal', 0) - resource.data.get('xpTotal', 0);
+      let sumaExtra = request.resource.data.get('xpExtra', 0) - resource.data.get('xpExtra', 0);
+      return logueado()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['xp', 'nivelJuego', 'xpTotal', 'xpExtra'])
+        && suma > 0 && suma <= 500
+        && sumaExtra >= 0 && sumaExtra <= suma
+        && request.resource.data.get('nivelJuego', 1) >= resource.data.get('nivelJuego', 1);
+    }
+
+    // ── DNI: cada uno es de una sola cuenta ────────────────────────────────
+
+    function refDni(dni) {
+      return /databases/$(database)/documents/dnis/$(dni.trim());
+    }
+
+    // El DNI vinculado al gym (si lo cambia) tiene que ser el mismo con el que
+    // se registró y estar reservado a su nombre: así nadie vincula el DNI de
+    // otro para ver sus ingresos y su cuota. Los entrenadores pueden vincular
+    // cualquiera (pruebas). Vale para el perfil público (versión vieja, que
+    // no reserva y por eso ya no puede vincular) y para el privado.
+    function gymDniReservado(uid) {
+      let nuevo = request.resource.data.get('gymDni', null);
+      return nuevo == null || nuevo == ''
+        || (resource != null && nuevo == resource.data.get('gymDni', null))
+        || (getAfter(refDni(nuevo)).data.uid == uid
+            && (nuevo.trim() == getAfter(refPrivado(uid)).data.get('dni', '').trim() || esEntrenador()));
+    }
+
+    // El DNI de registro no cambia una vez cargado.
+    function dniFijo() {
+      return resource == null
+        || resource.data.get('dni', null) == null
+        || request.resource.data.get('dni', null) == resource.data.get('dni', null);
+    }
+
+    function refPrivado(uid) {
+      return /databases/$(database)/documents/users/$(uid)/privado/datos;
+    }
+
+    match /dnis/{dni} {
+      allow get: if logueado();
+      allow list, update: if esEntrenador();
+      // Solo su propio DNI de registro, en la misma escritura que sus datos
+      // (un entrenador también el que vincula al gym para probar).
+      allow create: if logueado()
+                    && request.resource.data.uid == request.auth.uid
+                    && (getAfter(refPrivado(request.auth.uid)).data.get('dni', '').trim() == dni
+                        || (esEntrenador() && getAfter(refPrivado(request.auth.uid)).data.get('gymDni', '').trim() == dni));
+      allow delete: if esEntrenador() || (logueado() && resource.data.uid == request.auth.uid);
+    }
+
+    // ── Usuarios de la app ─────────────────────────────────────────────────
+
+    match /users/{uid} {
+      // Nombre, foto, nivel y puntos: los torneos los necesitan. Los datos
+      // personales están en privado/datos (abajo); las cuentas de la versión
+      // anterior los mudan solas al abrir la app nueva.
+      allow read: if logueado();
+
+      // Registro: siempre como usuario común.
+      allow create: if esMio(uid) && request.resource.data.get('rol', 'usuario') == 'usuario';
+
+      // Su propio perfil, sin tocarse el rol. Un entrenador puede modificar
+      // cualquiera (asignar roles). La protección de puntos vale para todos.
+      allow update: if (((esMio(uid) && noCambiaRol() && gymDniReservado(uid)) || esEntrenador())
+                       && noBajaContadores(uid) && noSacaLogros(uid))
+                    || esPremioDeTorneo();
+
+      allow delete: if esMio(uid);
+
+      // DNI, email, nacimiento, sexo, peso, altura: el dueño y los entrenadores.
+      match /privado/{doc} {
+        allow read: if esMio(uid) || esEntrenador();
+        allow create, update: if esMio(uid) && gymDniReservado(uid) && dniFijo();
+        allow delete: if esMio(uid);
+      }
+
+      // Pasos, visitas al gym, peso: el dueño y los entrenadores. Sus rutinas
+      // guardadas (rutinasGuardadas), solo el dueño.
+      match /{sub}/{doc} {
+        allow read: if esMio(uid) || (esEntrenador() && sub != 'rutinasGuardadas');
+        allow write: if esMio(uid) && sub != 'privado';
+      }
+    }
+
+    // Entrenadores: datos personales de todos de una vez (Mis clientes,
+    // anuncios, panel web).
+    match /{path=**}/privado/{doc} {
+      allow read: if esEntrenador();
+    }
+
+    // Pesos que usa en cada ejercicio.
+    match /gymWeights/{uid} {
+      allow read: if esMio(uid) || esEntrenador();
+      allow write: if esMio(uid);
+    }
+
+    // ── Rutinas ─────────────────────────────────────────────────────────────
+
+    // La arma el entrenador, o el alumno se arma la suya (creadaPor 'alumno').
+    // El alumno puede editar cualquier rutina suya, también la del entrenador:
+    // no puede cambiar quién la creó y queda anotado que la editó él.
+    function esRutinaDelAlumno(data) {
+      return logueado()
+        && data.clienteId == request.auth.uid
+        && data.get('creadaPor', 'entrenador') == 'alumno';
+    }
+
+    match /routines/{id} {
+      allow read: if esEntrenador() || (logueado() && resource.data.clienteId == request.auth.uid);
+      allow create: if esEntrenador() || esRutinaDelAlumno(request.resource.data);
+      allow update: if esEntrenador()
+                    || (logueado()
+                        && resource.data.clienteId == request.auth.uid
+                        && request.resource.data.clienteId == request.auth.uid
+                        && request.resource.data.get('creadaPor', 'entrenador') == resource.data.get('creadaPor', 'entrenador')
+                        && request.resource.data.get('editadaPor', '') == 'alumno');
+      allow delete: if esEntrenador() || esRutinaDelAlumno(resource.data);
+    }
+
+    // Rutinas del gym (plantillas): las arman los entrenadores; los alumnos ven
+    // solo las publicadas, para usarlas como su rutina.
+    match /plantillas/{id} {
+      allow read: if esEntrenador() || (logueado() && resource.data.get('publicada', false) == true);
+      allow write: if esEntrenador();
+    }
+
+    match /workoutLogs/{id} {
+      allow read: if esEntrenador() || (logueado() && resource.data.clienteId == request.auth.uid);
+      allow create: if logueado() && request.resource.data.clienteId == request.auth.uid;
+    }
+
+    // ── Gimnasio (panel web y pantallas de entrenador) ─────────────────────
+
+    // Un socio se puede leer de a uno por su DNI (el usuario vincula su cuenta
+    // escribiendo el DNI y después ve su cuota). La lista completa y los
+    // cambios, solo entrenadores.
+    match /socios/{dni} {
+      allow get: if logueado();
+      allow list, write: if esEntrenador();
+
+      match /{sub}/{doc} {
+        allow read, write: if esEntrenador();
+      }
+    }
+
+    // Ingresos al gym. POR AHORA cualquier usuario logueado los puede leer:
+    // la app los usa para contar cuánta gente hay y para el análisis (las
+    // pantallas muestran nombres solo a los entrenadores). Ojo: cada ingreso
+    // trae nombre y DNI; para cerrarlo hay que armar un resumen sin nombres
+    // desde el control de acceso. Cargarlos o modificarlos, solo entrenadores.
+    match /ingresosActivos/{id} {
+      allow read: if logueado();
+      allow write: if esEntrenador();
+    }
+
+    match /planes/{id} {
+      allow read, write: if esEntrenador();
+    }
+
+    match /convenios/{id} {
+      allow read, write: if esEntrenador();
+    }
+
+    // Misiones del día y anuncios: todos los ven, los cargan los entrenadores.
+    match /config/{id} {
+      allow read: if logueado();
+      allow write: if esEntrenador();
+    }
+
+    match /announcements/{id} {
+      allow read: if logueado();
+      allow write: if esEntrenador();
+    }
+
+    // Avisos para los entrenadores (ej.: un alumno se armó o modificó su
+    // rutina). Los crea el alumno, a su nombre; los ven los entrenadores.
+    match /avisos/{id} {
+      allow read, update, delete: if esEntrenador();
+      allow create: if logueado()
+                    && request.resource.data.alumnoUid == request.auth.uid
+                    && request.resource.data.tipo == 'rutina';
+    }
+
+    // Código de notificaciones de cada entrenador, para que la app de un
+    // alumno les pueda mandar esos avisos. Solo ese dato; lo escribe cada
+    // entrenador el suyo.
+    match /pushEntrenadores/{uid} {
+      allow read: if logueado();
+      allow write: if esMio(uid) && esEntrenador();
+    }
+
+    // ── Torneos entre amigos ───────────────────────────────────────────────
+
+    function fotoValida(fila) {
+      let real = get(/databases/$(database)/documents/users/$(fila.uid)).data;
+      return fila.get('xpTotalFin', 0) <= real.get('xpTotal', 0)
+        && fila.get('gymFin', 0) <= real.get('gymVisitCount', 0);
+    }
+
+    function participaDe(torneoId) {
+      return logueado()
+        && request.auth.uid in get(/databases/$(database)/documents/torneos/$(torneoId)).data.get('participantUids', []);
+    }
+
+    match /torneos/{torneoId} {
+      allow read: if logueado();
+      allow create: if logueado()
+                    && request.resource.data.creadoPor == request.auth.uid
+                    && request.resource.data.participantUids == [request.auth.uid];
+      // Los participantes invitan amigos; el creador lo finaliza.
+      allow update: if logueado() && request.auth.uid in resource.data.get('participantUids', [])
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fechaFin', 'fechaInicio', 'creadoPor']);
+      allow delete: if logueado() && (resource.data.creadoPor == request.auth.uid || esEntrenador());
+
+      match /participantes/{p} {
+        allow read: if logueado();
+        // Invitar amigos: cualquier participante.
+        allow create: if participaDe(torneoId);
+        // La fila la actualiza su dueño (foto de sus puntos, ver
+        // torneoService) o el creador al cerrarlo. La foto nunca puede tener
+        // más puntos que los reales del jugador.
+        allow update: if participaDe(torneoId)
+                      && (resource.data.uid == request.auth.uid
+                          || get(/databases/$(database)/documents/torneos/$(torneoId)).data.creadoPor == request.auth.uid)
+                      && fotoValida(request.resource.data);
+        allow delete: if participaDe(torneoId);
+      }
+    }
+  }
+}

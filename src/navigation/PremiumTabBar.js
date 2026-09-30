@@ -32,6 +32,11 @@ import { View, StyleSheet, Dimensions, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { USAR_TABS_NATIVAS } from './tabsNativas';
+
+const useAlturaBarraNativa = USAR_TABS_NATIVAS
+  ? require('react-native-bottom-tabs').useBottomTabBarHeight
+  : () => 0;
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -46,11 +51,28 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../context/ThemeContext';
 
+// Barra flotante: una "pastilla" separada de los bordes de la pantalla.
 const { width: SW } = Dimensions.get('window');
-const N     = 4;
-const TAB_W = SW / N;
-const IND_W = 44;
-const IND_H = 3;
+const N       = 4;
+const PILL_M  = 16;                 // margen a los costados de la pantalla
+const PILL_P  = 6;                  // relleno interno de la pastilla
+const TAB_W   = (SW - 2 * PILL_M - 2 * PILL_P) / N;
+const IND_W   = 28;
+const IND_H   = 3;
+const PILL_H  = 62;
+const PAD_TOP = 6;
+const padAbajo = (insets) => insets.bottom + (Platform.OS === 'ios' ? 4 : 10);
+
+// Espacio que tienen que dejar al final las pantallas con pestañas, para que
+// lo último no quede tapado por la barra (que flota encima del contenido).
+export function useEspacioBarra() {
+  const insets = useSafeAreaInsets();
+  // Barra nativa de iPhone: su altura la da la propia librería.
+  // (USAR_TABS_NATIVAS no cambia mientras la app corre, así que el orden de
+  // los hooks es siempre el mismo.)
+  if (USAR_TABS_NATIVAS) return useAlturaBarraNativa() + 12;
+  return PAD_TOP + PILL_H + padAbajo(insets) + 12;
+}
 
 const SPRING = {
   damping:           26,
@@ -113,7 +135,7 @@ function TabItem({ route, index, position, indScale, onPress }) {
             <Animated.View style={[StyleSheet.absoluteFill, st.center, inactiveOpacity]}>
               <Ionicons name={meta.filled} size={24} color={colors.textTertiary} />
             </Animated.View>
-            <Animated.View style={[StyleSheet.absoluteFill, st.center, activeOpacity]}>
+            <Animated.View style={[StyleSheet.absoluteFill, st.center, st.iconGlow, { shadowColor: colors.primary }, activeOpacity]}>
               <Ionicons name={meta.filled} size={24} color={colors.primary} />
             </Animated.View>
           </View>
@@ -144,14 +166,14 @@ export default function PremiumTabBar({ state, navigation }) {
 
   // Indicator + container colors as SharedValues so they update with theme
   const primarySV = useSharedValue(colors.primary);
-  const bgSV      = useSharedValue(colors.surfaceLowest);
-  const borderSV  = useSharedValue(colors.borderLight);
+  const bgSV      = useSharedValue(colors.surfaceContainer + 'E6');
+  const borderSV  = useSharedValue(colors.border);
 
   useEffect(() => {
     primarySV.value = colors.primary;
-    bgSV.value      = colors.surfaceLowest;
-    borderSV.value  = colors.borderLight;
-  }, [colors.primary, colors.surfaceLowest, colors.borderLight]);
+    bgSV.value      = colors.surfaceContainer + 'E6';
+    borderSV.value  = colors.border;
+  }, [colors.primary, colors.surfaceContainer, colors.border]);
 
   useEffect(() => {
     position.value = withSpring(state.index, SPRING);
@@ -208,32 +230,24 @@ export default function PremiumTabBar({ state, navigation }) {
   // Indicator: transform + reactive colors in one animated style
   const indicatorStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateX: position.value * TAB_W + (TAB_W - IND_W) / 2 },
+      { translateX: PILL_P + position.value * TAB_W + (TAB_W - IND_W) / 2 },
       { scaleX:     indScale.value },
     ],
     backgroundColor: primarySV.value,
     shadowColor:     primarySV.value,
   }));
 
-  // Container: background + border reactive to theme
-  const containerDynStyle = useAnimatedStyle(() => ({
+  // Pastilla: fondo + borde reactivos al tema
+  const pillDynStyle = useAnimatedStyle(() => ({
     backgroundColor: bgSV.value,
-    borderTopColor:  borderSV.value,
+    borderColor:     borderSV.value,
   }));
-
-  const contentH  = 56;
-  const bottomPad = insets.bottom + (Platform.OS === 'ios' ? 6 : 2);
 
   return (
     <GestureDetector gesture={panGesture}>
-      <Animated.View
-        style={[
-          st.container,
-          containerDynStyle,
-          { height: contentH + bottomPad, paddingBottom: bottomPad },
-        ]}
-      >
-        {/* Neon indicator bar */}
+      <View style={[st.container, { paddingBottom: padAbajo(insets) }]} pointerEvents="box-none">
+        <Animated.View style={[st.pill, pillDynStyle, { height: PILL_H }]}>
+        {/* Línea brillante arriba de la pestaña activa */}
         <Animated.View pointerEvents="none" style={[st.indicator, indicatorStyle]} />
 
         {/* Tab buttons — each has its own nested Gesture.Tap() detector */}
@@ -249,15 +263,32 @@ export default function PremiumTabBar({ state, navigation }) {
             />
           ))}
         </View>
-      </Animated.View>
+        </Animated.View>
+      </View>
     </GestureDetector>
   );
 }
 
 // ── Layout-only styles — all colors live in SharedValues above ────────────────
 const st = StyleSheet.create({
+  // Flota encima de la pantalla: sin fondo propio, el contenido se ve detrás.
   container: {
-    borderTopWidth: 1,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingTop: PAD_TOP,
+    paddingHorizontal: PILL_M,
+  },
+  pill: {
+    borderRadius: 26,
+    borderWidth: 1,
+    paddingHorizontal: PILL_P,
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
   },
   row: {
     flex: 1,
@@ -265,10 +296,15 @@ const st = StyleSheet.create({
     alignItems: 'center',
   },
   tabBtn: {
-    flex: 1,
+    width: TAB_W,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 10,
+    paddingTop: 4,
+  },
+  iconGlow: {
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
   },
   iconBox: {
     width: 24,
@@ -293,7 +329,7 @@ const st = StyleSheet.create({
   },
   indicator: {
     position:     'absolute',
-    top:          0,
+    top:          -2,
     left:         0,
     width:        IND_W,
     height:       IND_H,

@@ -101,6 +101,25 @@ class StepCounterModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    // Totales de los últimos días cerrados ({"YYYY-MM-DD": pasos}), ver
+    // StepCounterService.historyWith. No hace falta "vaciarlo" después de
+    // leerlo: la app acredita cada día de forma idempotente.
+    @ReactMethod
+    fun getStepHistory(promise: Promise) {
+        try {
+            val prefs = reactApplicationContext
+                .getSharedPreferences(StepCounterService.PREFS_NAME, Context.MODE_PRIVATE)
+            val json = org.json.JSONObject(
+                prefs.getString(StepCounterService.KEY_DAILY_HISTORY, "{}") ?: "{}"
+            )
+            val result = Arguments.createMap()
+            json.keys().forEach { date -> result.putInt(date, json.optInt(date, 0)) }
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("ERR_GET_HISTORY", e.message)
+        }
+    }
+
     // Se llama después de subir con éxito el valor de getPendingHistorySync a
     // Firestore, para no volver a subir lo mismo la próxima vez.
     @ReactMethod

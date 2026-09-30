@@ -1,24 +1,25 @@
-import { createContext, useContext, useEffect, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { doc, setDoc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import useSteps from '../hooks/useSteps';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
 import {
-  calcCalories, calcDistanceKm, computeAge, todayDateString, localDateString, openHealthConnectInstall, getStepsForDate,
+  calcCalories, calcDistanceKm, computeAge, todayDateString, openHealthConnectInstall,
 } from '../services/stepService';
 import {
-  awardXPAndCoins, checkAndAwardGymReward, updateStreak, resetStreakIfBroken,
-  XP_PER_1K_STEPS, XP_GOAL_BONUS,
+  checkAndAwardGymReward,
   markGymRewardPending, clearGymRewardPending,
 } from '../services/gamificationService';
 import { subscribeToUserPresence } from '../services/gymService';
-import { flushPendingHistorySync } from '../services/backgroundStepsSync';
-import { stepMilestones } from '../constants/mockData';
+import { sincronizarPasosYPuntos } from '../services/backgroundStepsSync';
+import { acreditarPasosDelDia, xpPorPasos } from '../services/stepRewardsService';
 
 const DEFAULT_GOAL = 10000;
+const GOAL_KEY = 'dailyStepGoal'; // misma clave que usaban Inicio y Racha
+const GOAL_MIGRATED_KEY = 'dailyStepGoal_enPerfil';
 const StepContext  = createContext(null);
 
 export function StepProvider({ children }) {
@@ -40,6 +41,61 @@ export function StepProvider({ children }) {
   const profileRef = useRef(profile);
   useEffect(() => { profileRef.current = profile; }, [profile]);
 
+  // ── Meta diaria de pasos ─────────────────────────────────────────────────────
+  // Una sola, en el perfil (users/{uid}.dailyStepGoal), porque de ahí la leen
+  // la racha y los puntos, también con la app cerrada. Antes la pantalla de
+  // Inicio la guardaba solo en el celular: el usuario veía su meta (p. ej. 6000)
+  // pero la racha se seguía contando con 10000. AsyncStorage queda como copia
+  // para mostrarla al instante mientras carga el perfil.
+  const [localGoal, setLocalGoal] = useState(null);
+  useEffect(() => {
+    AsyncStorage.getItem(GOAL_KEY).then((v) => { if (v) setLocalGoal(Number(v)); }).catch(() => {});
+  }, []);
+
+  // Primero la migración y recién después el perfil pisa la copia local: al
+  // revés, el 10000 del perfil borraba el 6000 local antes de poder subirlo.
+  //  - Una sola vez por celular: si la meta local (la de Inicio) no coincide
+  //    con la del perfil, gana la local, que es la que el usuario veía.
+  //  - De ahí en más manda el perfil (si se cambia en otro celular, acá se
+  //    actualiza la copia).
+  const perfilCargado = !!profile;
+  useEffect(() => {
+    if (!user?.uid || !perfilCargado) return;
+    let cancelado = false;
+    (async () => {
+      try {
+        const [local, migrado] = await Promise.all([
+          AsyncStorage.getItem(GOAL_KEY),
+          AsyncStorage.getItem(GOAL_MIGRATED_KEY),
+        ]);
+        const metaPerfil = profileRef.current?.dailyStepGoal ?? null;
+        if (!migrado) {
+          await AsyncStorage.setItem(GOAL_MIGRATED_KEY, '1');
+          const metaLocal = local ? Number(local) : null;
+          if (metaLocal && metaLocal !== metaPerfil) {
+            await updateDoc(doc(db, 'users', user.uid), { dailyStepGoal: metaLocal });
+            return; // el listener del perfil trae el valor nuevo
+          }
+        }
+        if (metaPerfil && !cancelado) {
+          setLocalGoal(metaPerfil);
+          await AsyncStorage.setItem(GOAL_KEY, String(metaPerfil));
+        }
+      } catch {}
+    })();
+    return () => { cancelado = true; };
+  }, [user?.uid, perfilCargado, profile?.dailyStepGoal]);
+
+  const setGoal = useCallback((valor) => {
+    const n = Math.max(1000, Math.min(50000, Math.round(Number(valor) || DEFAULT_GOAL)));
+    setLocalGoal(n);
+    AsyncStorage.setItem(GOAL_KEY, String(n)).catch(() => {});
+    AsyncStorage.setItem(GOAL_MIGRATED_KEY, '1').catch(() => {});
+    if (user?.uid) updateDoc(doc(db, 'users', user.uid), { dailyStepGoal: n }).catch(() => {});
+  }, [user?.uid]);
+
+  const goal = profile?.dailyStepGoal ?? localGoal ?? DEFAULT_GOAL;
+
   // ── Backfill: recover past day's steps that were in profile before stepsHistory existed
   useEffect(() => {
     if (!user?.uid || !profile?.stepsDate || !profile?.stepsToday) return;
@@ -48,195 +104,59 @@ export function StepProvider({ children }) {
       setDoc(doc(db, 'users', user.uid, 'stepsHistory', profile.stepsDate), {
         date:  profile.stepsDate,
         steps: profile.stepsToday,
-      }).catch(() => {});
+      }, { merge: true }).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.stepsDate]);
 
-  // ── Flush del día pendiente que guardó el servicio nativo ────────────────────
-  // Si el usuario no abrió la app un día entero (y la tarea en background no
-  // llegó a correr antes de la medianoche), el total final de ese día queda
-  // guardado aparte en el servicio nativo — ver stashPendingSync en
-  // StepCounterService.kt. Al abrir la app, esta es la vía más confiable para
-  // recuperarlo (no depende de que WorkManager decida ejecutar la tarea).
-  const hasFlushedPendingRef = useRef(false);
+  // ── Pasos y puntos de los días anteriores ────────────────────────────────────
+  // Al abrir la app se hace lo mismo que la tarea en segundo plano: se leen los
+  // pasos que guardó el celular (historial del servicio nativo en Android, los
+  // 7 días del sensor en iOS) y se acreditan sus puntos. Es idempotente, así que
+  // no importa si la tarea ya lo había hecho.
+  const hasSyncedHistoryRef = useRef(false);
   useEffect(() => {
-    if (!user?.uid || hasFlushedPendingRef.current) return;
-    hasFlushedPendingRef.current = true;
-    flushPendingHistorySync(user.uid);
-  }, [user?.uid]);
-
-  // ── Backfill histórico: consulta CMPedometer / HC para los últimos 6 días ──
-  // Corre una vez por sesión cuando el pedómetro ya está listo.
-  // Asegura que si el usuario caminó sin abrir la app, igual queda guardado.
-  const hasBackfilledRef = useRef(false);
-  useEffect(() => {
-    if (!user?.uid || !available || loading) return;
-    if (hasBackfilledRef.current) return;
-    hasBackfilledRef.current = true;
-
-    async function backfill() {
-      for (let i = 1; i <= 6; i++) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        const dateStr = localDateString(d);
-
-        const count = await getStepsForDate(d);
-        if (!count || count <= 0) continue;
-
-        const ref  = doc(db, 'users', user.uid, 'stepsHistory', dateStr);
-        const snap = await getDoc(ref);
-        const stored = snap.exists() ? (snap.data().steps ?? 0) : 0;
-
-        if (count > stored) {
-          await setDoc(ref, { date: dateStr, steps: count });
-        }
-      }
-    }
-
-    backfill().catch(() => {});
+    if (!user?.uid || !available || loading || hasSyncedHistoryRef.current) return;
+    hasSyncedHistoryRef.current = true;
+    sincronizarPasosYPuntos(user.uid).catch(() => {});
   }, [user?.uid, available, loading]);
 
-  // ── Firestore step sync ───────────────────────────────────────────────────────
-  const lastSyncedRef = useRef(0);
-
-  const syncFirestore = useRef(async (currentSteps) => {
-    if (!user?.uid) return;
-    const today = todayDateString();
+  // ── Pasos y puntos de hoy, en vivo ───────────────────────────────────────────
+  // Se acredita cada 250 pasos o cuando cambian los puntos que corresponden
+  // (cada mil pasos, la meta o un hito). Los puntos ya no se calculan acá: se
+  // calculan en stepRewardsService, igual para la app abierta y cerrada.
+  const lastSyncedRef = useRef({ steps: 0, xp: 0 });
+  const acreditarHoy = useRef(async (uid, currentSteps, goalActual) => {
+    if (!uid || !(currentSteps > 0)) return;
+    lastSyncedRef.current = { steps: currentSteps, xp: xpPorPasos(currentSteps, goalActual) };
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        stepsToday:     currentSteps,
-        stepsDate:      today,
-        stepsUpdatedAt: serverTimestamp(),
-      });
-      await setDoc(doc(db, 'users', user.uid, 'stepsHistory', today), {
-        date:  today,
-        steps: currentSteps,
-      });
-      lastSyncedRef.current = currentSteps;
-    } catch {}
+      await acreditarPasosDelDia(uid, todayDateString(), currentSteps);
+    } catch {
+      // Sin conexión: se reintenta en el próximo cambio o al ir a segundo plano.
+      lastSyncedRef.current = { steps: 0, xp: 0 };
+    }
   }).current;
 
+  // `goal` en las dependencias: si el usuario baja la meta y ya la superó, el
+  // bono de meta y el día de racha se acreditan en el momento.
   useEffect(() => {
-    if (!available || loading) return;
-    if (Math.abs(steps - lastSyncedRef.current) >= 250) syncFirestore(steps);
-  }, [steps, available, loading, syncFirestore]);
+    if (!user?.uid || !available || loading) return;
+    const prev = lastSyncedRef.current;
+    const xpAhora = xpPorPasos(steps, goal);
+    if (steps - prev.steps >= 250 || xpAhora > prev.xp) acreditarHoy(user.uid, steps, goal);
+  }, [steps, goal, user?.uid, available, loading, acreditarHoy]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'background') syncFirestore(steps);
+      if (state === 'background' && user?.uid) acreditarHoy(user.uid, steps, goal);
     });
     return () => sub.remove();
-  }, [steps, syncFirestore]);
+  }, [steps, goal, user?.uid, acreditarHoy]);
 
-  // ── Gamification: milestone bonuses (one-time per milestone per day) ──────────
-  // milestoneBaseRef: steps on first mount reading — milestones already passed at
-  // startup are marked as reached without awarding (same pattern as per-1K below).
-  const milestoneBaseRef    = useRef(-1);
-  const milestoneReachedRef = useRef(new Set());
-
-  useEffect(() => {
-    AsyncStorage.getItem(`milestones_${todayDateString()}`)
-      .then(v => { if (v) milestoneReachedRef.current = new Set(JSON.parse(v)); })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!user?.uid || loading || steps === 0) return;
-
-    // First reading: mark already-passed milestones without awarding
-    if (milestoneBaseRef.current < 0) {
-      milestoneBaseRef.current = steps;
-      stepMilestones.forEach(m => {
-        if (steps >= m.steps) milestoneReachedRef.current.add(m.steps);
-      });
-      return;
-    }
-
-    const prev = milestoneBaseRef.current;
-    milestoneBaseRef.current = steps;
-    let updated = false;
-
-    stepMilestones.forEach(m => {
-      if (steps >= m.steps && prev < m.steps && !milestoneReachedRef.current.has(m.steps)) {
-        milestoneReachedRef.current.add(m.steps);
-        updated = true;
-        awardXPAndCoins(user.uid, m.xp);
-      }
-    });
-
-    if (updated) {
-      AsyncStorage.setItem(
-        `milestones_${todayDateString()}`,
-        JSON.stringify([...milestoneReachedRef.current])
-      ).catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [steps, user?.uid, loading]);
-
-  // ── Gamification: XP/coins from step milestones ───────────────────────────────
-  const rewardedKRef = useRef(0);
-  const prevStepsRef = useRef(-1);
-
-  // Restore today's already-rewarded milestone from AsyncStorage on mount
-  useEffect(() => {
-    AsyncStorage.getItem(`rewarded_k_${todayDateString()}`)
-      .then(v => { if (v) rewardedKRef.current = parseInt(v, 10) || 0; })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!user?.uid || loading || steps === 0) return;
-
-    // First real reading after mount — set baseline without awarding
-    if (prevStepsRef.current < 0) {
-      prevStepsRef.current = steps;
-      return;
-    }
-
-    // Midnight reset: useSteps drops steps to 0 when the date rolls over
-    if (steps < prevStepsRef.current && prevStepsRef.current > 100) {
-      rewardedKRef.current = 0;
-      AsyncStorage.setItem(`rewarded_k_${todayDateString()}`, '0').catch(() => {});
-    }
-    prevStepsRef.current = steps;
-
-    const newK = Math.floor(steps / 1000);
-    const oldK = rewardedKRef.current;
-    if (newK <= oldK) return;
-
-    const diff  = newK - oldK;
-    let xpGain  = diff * XP_PER_1K_STEPS;
-
-    // Daily goal bonus (only once, when crossing the threshold)
-    const userGoal = profileRef.current?.dailyStepGoal ?? DEFAULT_GOAL;
-    if (steps >= userGoal && oldK * 1000 < userGoal) {
-      xpGain += XP_GOAL_BONUS;
-    }
-
-    rewardedKRef.current = newK;
-    AsyncStorage.setItem(`rewarded_k_${todayDateString()}`, String(newK)).catch(() => {});
-    awardXPAndCoins(user.uid, xpGain);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [steps, user?.uid, loading]);
-
-  // ── Gamification: streak ──────────────────────────────────────────────────────
-  // La racha solo debe sumar el día de hoy cuando se alcanza el objetivo diario
-  // real del usuario (profile.dailyStepGoal) — no un umbral fijo arbitrario.
-  // Si todavía no se llegó al objetivo hoy, resetStreakIfBroken corta la racha
-  // en cuanto detecta que ya pasó un día entero sin lograrlo (en vez de dejarla
-  // "trabada" en el último valor hasta la próxima vez que sí se cumpla).
-  useEffect(() => {
-    if (!user?.uid || !profile) return;
-    const today = todayDateString();
-    if (profile.lastActiveDate === today) return;
-    const streakGoal = profile.dailyStepGoal ?? DEFAULT_GOAL;
-    if (steps >= streakGoal) {
-      updateStreak(user.uid, profile.racha ?? 0, profile.lastActiveDate ?? null);
-    } else {
-      resetStreakIfBroken(user.uid, profile.racha ?? 0, profile.lastActiveDate ?? null);
-    }
-  }, [steps, user?.uid, profile]);
+  // Racha: la suma stepRewardsService cuando un día llega a la meta, y la corta
+  // sincronizarPasosYPuntos (arriba) DESPUÉS de acreditar los días anteriores.
+  // Cortarla antes, apenas carga el perfil, la ponía en 0 cuando ayer sí se
+  // había llegado a la meta pero todavía no estaba acreditado.
 
   // ── Gamification: gym presence reward ────────────────────────────────────────
   useEffect(() => {
@@ -255,8 +175,6 @@ export function StepProvider({ children }) {
     });
   }, [profile?.gymDni, user?.uid]);
 
-  const goal = profile?.dailyStepGoal ?? DEFAULT_GOAL;
-
   const value = {
     steps,
     calories,
@@ -268,6 +186,7 @@ export function StepProvider({ children }) {
     connectHealthConnect: connectHC,
     installHealthConnect: openHealthConnectInstall,
     goal,
+    setGoal,
     percent: Math.min(100, Math.round((steps / goal) * 100)),
   };
 

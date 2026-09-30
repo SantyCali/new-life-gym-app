@@ -1,5 +1,6 @@
 import { doc, collection, onSnapshot, setDoc, deleteDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { juntarPerfil, leerPrivadoDeTodos } from './perfilPrivadoService';
 
 const REF = doc(db, 'announcements', 'active');
 
@@ -18,9 +19,9 @@ export async function deleteAnnouncement() {
 }
 
 export async function sendAnnouncementNotification({ title, message }) {
-  const snap = await getDocs(collection(db, 'users'));
+  const [snap, privados] = await Promise.all([getDocs(collection(db, 'users')), leerPrivadoDeTodos().catch(() => ({}))]);
   const tokens = snap.docs
-    .map(d => d.data().expoPushToken)
+    .map(d => juntarPerfil(d.data(), privados[d.id]).expoPushToken)
     .filter(Boolean);
 
   if (tokens.length === 0) return;

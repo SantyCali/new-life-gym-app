@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { typography, spacing, radius } from '../theme';
@@ -28,6 +28,8 @@ import {
   eliminarTorneo,
   searchUsers,
   tiempoRestante,
+  torneoTerminado,
+  puntosEnTorneo,
   PRIZES,
 } from '../services/torneoService';
 
@@ -48,12 +50,14 @@ export default function TorneoDetailScreen({ route, navigation }) {
   const { torneoId, nombre } = route.params;
   const { theme: { colors } } = useTheme();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [torneo,       setTorneo]       = useState(null);
   const [participantes, setParticipantes] = useState([]);
   const [stats,        setStats]        = useState({});
   const [loadingStats, setLoadingStats] = useState(true);
+  const [statsDe,      setStatsDe]      = useState('');   // uids de la última lectura de stats
   const [finalizando,  setFinalizando]  = useState(false);
   const [resultModal,  setResultModal]  = useState(false);
 
@@ -79,6 +83,8 @@ export default function TorneoDetailScreen({ route, navigation }) {
 
   const isCreator = torneo?.creadoPor === user?.uid;
   const isActivo  = torneo?.activo !== false;
+  // Pasó la fecha de fin o se finalizó: la tabla queda congelada.
+  const terminado = torneoTerminado(torneo);
 
   const refreshStats = useCallback(async () => {
     const parts = participantesRef.current;
@@ -88,6 +94,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
       const uids = parts.map(p => p.uid);
       const result = await fetchParticipantStats(uids);
       setStats(result);
+      setStatsDe(uids.slice().sort().join(','));
     } catch {}
     setLoadingStats(false);
   }, []);
@@ -104,13 +111,25 @@ export default function TorneoDetailScreen({ route, navigation }) {
     return participantes
       .map(p => {
         const current = stats[p.uid] ?? {};
-        const xpGanado  = Math.max(0, (current.xpTotal ?? 0) - (p.xpTotalInicio ?? 0));
-        const gymGanado = Math.max(0, (current.gymVisitCount ?? 0) - (p.gymInicio ?? 0));
+        const { xpGanado, gymGanado } = puntosEnTorneo(p, current, terminado);
         const nivel     = current.nivelJuego ?? 1;
-        return { ...p, xpGanado, gymGanado, nivel };
+        return { ...p, xpGanado, gymGanado, nivel, actual: current };
       })
       .sort((a, b) => b.xpGanado - a.xpGanado);
-  }, [participantes, stats]);
+  }, [participantes, stats, terminado]);
+
+  // Venció y nadie lo finalizó: se cierra (y se premia) al abrirlo, con la
+  // tabla congelada en la fecha de fin. Espera a tener los puntos de todos.
+  const cierreAutoRef = useRef(false);
+  useEffect(() => {
+    if (!torneo || torneo.activo === false || !terminado || cierreAutoRef.current) return;
+    if (!participantes.length || loadingStats) return;
+    if (statsDe !== participantes.map(p => p.uid).sort().join(',')) return;
+    cierreAutoRef.current = true;
+    finalizarTorneo(torneoId, leaderboard)
+      .then(cerro => { if (cerro && leaderboard.length >= 2) setResultModal(true); })
+      .catch(() => { cierreAutoRef.current = false; });
+  }, [torneo, terminado, participantes, loadingStats, statsDe, leaderboard, torneoId]);
 
   const existingUids = useMemo(() => new Set(participantes.map(p => p.uid)), [participantes]);
 
@@ -167,8 +186,8 @@ export default function TorneoDetailScreen({ route, navigation }) {
     if (finalizando || !leaderboard.length) return;
     setFinalizando(true);
     try {
-      await finalizarTorneo(torneoId, leaderboard);
-      setResultModal(true);
+      const cerro = await finalizarTorneo(torneoId, leaderboard);
+      if (cerro) setResultModal(true);
     } catch {}
     setFinalizando(false);
   }, [torneoId, leaderboard, finalizando]);
@@ -219,9 +238,9 @@ export default function TorneoDetailScreen({ route, navigation }) {
         </View>
         <View style={styles.searchBody}>
           <Text style={[styles.searchName, { color: colors.text }]} numberOfLines={1}>
-            {`${item.nombre ?? ''} ${item.apellido ?? ''}`.trim() || item.email}
+            {`${item.nombre ?? ''} ${item.apellido ?? ''}`.trim() || 'Sin nombre'}
           </Text>
-          <Text style={[styles.searchEmail, { color: colors.textSecondary }]} numberOfLines={1}>{item.email}</Text>
+          <Text style={[styles.searchEmail, { color: colors.textSecondary }]} numberOfLines={1}>{`Nivel ${item.nivelJuego ?? 1}`}</Text>
         </View>
         {fb === 'loading' ? (
           <ActivityIndicator size="small" color={colors.primary} />
@@ -272,7 +291,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
         })()}
 
         {/* Agregar jugador */}
-        {isActivo && (
+        {!terminado && (
           <TouchableOpacity
             style={[styles.addPlayerBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
             onPress={() => { setSearchModal(true); setSearchQuery(''); setSearchResults([]); setFeedback({}); }}
@@ -292,7 +311,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
         )}
 
         {/* Finalizar torneo — solo creador, torneo activo, mínimo 2 jugadores */}
-        {isCreator && isActivo && leaderboard.length >= 2 && (
+        {isCreator && !terminado && leaderboard.length >= 2 && (
           <TouchableOpacity
             style={[styles.finalizarBtn, { backgroundColor: '#EF444415', borderColor: '#EF444440' }]}
             onPress={handleFinalizar}
@@ -340,7 +359,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
       )}
 
       {/* Modal de resultados finales */}
-      <Modal visible={resultModal} transparent animationType="fade" onRequestClose={() => setResultModal(false)}>
+      <Modal visible={resultModal} transparent animationType="fade" onRequestClose={() => setResultModal(false)} statusBarTranslucent navigationBarTranslucent>
         <View style={styles.resultOverlay}>
           <View style={[styles.resultCard, { backgroundColor: colors.surface, borderColor: '#FBBF2440' }]}>
             <Text style={styles.resultTrophy}>🏆</Text>
@@ -370,12 +389,18 @@ export default function TorneoDetailScreen({ route, navigation }) {
         </View>
       </Modal>
 
+      {/* Pantalla completa, también detrás de las barras del sistema: sin esto
+          en Android se veía la pantalla de atrás por abajo. Los márgenes salen
+          de la pantalla (adentro del Modal el SafeAreaView no los conoce y en
+          iOS la flecha quedaba debajo del notch). */}
       <Modal
         visible={searchModal}
         animationType="slide"
         onRequestClose={() => setSearchModal(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
-        <SafeAreaView style={[styles.searchScreen, { backgroundColor: colors.background }]} edges={['top']}>
+        <View style={[styles.searchScreen, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
             {/* Header */}
             <View style={[styles.searchHeader, { borderBottomColor: colors.border }]}>
@@ -390,7 +415,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
               <Ionicons name="search" size={16} color={colors.textTertiary} />
               <TextInput
                 style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Buscar por nombre o email"
+                placeholder="Buscar por nombre"
                 placeholderTextColor={colors.textTertiary}
                 value={searchQuery}
                 onChangeText={handleSearch}
@@ -415,11 +440,11 @@ export default function TorneoDetailScreen({ route, navigation }) {
               </View>
             ) : !searchQuery.trim() ? (
               <View style={styles.noResults}>
-                <Text style={[styles.noResultsText, { color: colors.textTertiary }]}>Escribí un nombre o email para buscar</Text>
+                <Text style={[styles.noResultsText, { color: colors.textTertiary }]}>Escribí un nombre para buscar</Text>
               </View>
             ) : null}
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );

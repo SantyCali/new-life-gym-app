@@ -369,7 +369,7 @@ function QuotaSections({ data, search, colors, styles, spacing, refreshing, onRe
       </ScrollView>
 
       {/* ── Modal edición de socio ─────────────────────────────────────────── */}
-      <Modal visible={!!editSocio} transparent animationType="fade" onRequestClose={closeEdit}>
+      <Modal visible={!!editSocio} transparent animationType="fade" onRequestClose={closeEdit} statusBarTranslucent navigationBarTranslucent>
         <TouchableOpacity
           style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', alignItems: 'center' }}
           activeOpacity={1}
@@ -614,7 +614,6 @@ export default function GymScreen({ navigation }) {
     else setQuotaLoading(true);
     try {
       const rows = await getSociosQuotaStatus();
-      console.log('[Cuotas] socios cargados:', rows.length);
       setQuotaData(rows);
     } catch (err) {
       console.error('[Cuotas] Error Firestore:', err?.code, err?.message);
@@ -687,7 +686,6 @@ export default function GymScreen({ navigation }) {
     setSociosLoading(true);
     try {
       const rows = await getAllSocios();
-      console.log('[Picker] socios cargados:', rows.length);
       setSociosList(rows);
     } catch (err) {
       console.error('[Picker] Error Firestore:', err?.code, err?.message);
@@ -812,10 +810,11 @@ export default function GymScreen({ navigation }) {
         ItemSeparatorComponent={() => <View style={{ height: spacing.sm }} />}
       />
 
-      {/* Trainer buttons */}
-      {isTrainer && (
+      {/* Botones: el usuario común solo ve Análisis (sin nombres ni cuotas) */}
+      {(
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
           <View style={styles.footerRow}>
+            {isTrainer && (<>
             <TouchableOpacity
               style={[styles.footerSecBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
               onPress={openHistory}
@@ -832,6 +831,7 @@ export default function GymScreen({ navigation }) {
               <Ionicons name="card-outline" size={16} color={colors.primary} />
               <Text style={[styles.footerSecText, { color: colors.primary }]}>Cuotas</Text>
             </TouchableOpacity>
+            </>)}
             <TouchableOpacity
               style={[styles.footerSecBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
               onPress={() => openAnalytics(analyticsRange)}
@@ -841,6 +841,7 @@ export default function GymScreen({ navigation }) {
               <Text style={[styles.footerSecText, { color: colors.primary }]}>Análisis</Text>
             </TouchableOpacity>
           </View>
+          {isTrainer && (
           <TouchableOpacity
             style={[styles.addBtn, { backgroundColor: colors.primary }]}
             onPress={openPicker}
@@ -849,6 +850,7 @@ export default function GymScreen({ navigation }) {
             <Ionicons name="person-add-outline" size={18} color={colors.textInverse} />
             <Text style={[styles.addBtnText, { color: colors.textInverse }]}>Registrar entrada</Text>
           </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -857,8 +859,10 @@ export default function GymScreen({ navigation }) {
         visible={historyVisible}
         animationType="slide"
         onRequestClose={() => setHistoryVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
-        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => setHistoryVisible(false)}>
@@ -941,8 +945,10 @@ export default function GymScreen({ navigation }) {
         visible={analyticsVisible}
         animationType="slide"
         onRequestClose={() => setAnalyticsVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
-        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => setAnalyticsVisible(false)}>
               <Ionicons name="close" size={24} color={colors.text} />
@@ -982,8 +988,10 @@ export default function GymScreen({ navigation }) {
         visible={quotaVisible}
         animationType="slide"
         onRequestClose={() => setQuotaVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
-        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => setQuotaVisible(false)}>
               <Ionicons name="close" size={24} color={colors.text} />
@@ -1032,7 +1040,7 @@ export default function GymScreen({ navigation }) {
           )}
 
           {/* Modal agregar nuevo socio — anidado en el modal de cuotas para que iOS lo muestre sin esperar */}
-          <Modal visible={newSocioVisible} transparent animationType="fade" onRequestClose={() => setNewSocioVisible(false)}>
+          <Modal visible={newSocioVisible} transparent animationType="fade" onRequestClose={() => setNewSocioVisible(false)} statusBarTranslucent navigationBarTranslucent>
             <TouchableOpacity style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => { Keyboard.dismiss(); setNewSocioVisible(false); }}>
               <TouchableOpacity activeOpacity={1} onPress={Keyboard.dismiss} style={{ width: '88%', backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.xl, borderWidth: 1, borderColor: colors.border }}>
                     <Text style={[styles.modalTitle, { color: colors.text, marginBottom: spacing.lg }]}>Agregar socio</Text>
@@ -1106,8 +1114,10 @@ export default function GymScreen({ navigation }) {
         visible={pickerVisible}
         animationType="slide"
         onRequestClose={() => setPickerVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
-        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.header}>
             <TouchableOpacity style={styles.backBtn} onPress={() => setPickerVisible(false)}>
               <Ionicons name="close" size={24} color={colors.text} />

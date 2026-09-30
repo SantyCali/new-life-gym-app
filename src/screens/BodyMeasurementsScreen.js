@@ -466,6 +466,8 @@ export default function BodyMeasurementsScreen({ navigation }) {
         transparent
         animationType="slide"
         onRequestClose={cancelPicker}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
         <View style={styles.modalWrapper}>
           <Pressable style={styles.backdrop} onPress={cancelPicker} />

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, Switch, StyleSheet, Alert, Platform, Linking } from 'react-native';
+import { View, Text, Switch, StyleSheet, Alert, Platform, Linking, Modal, TextInput, ActivityIndicator } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
+import useAuth from '../hooks/useAuth';
 import {
   nativeServiceAvailable,
   getNotificationSilent,
@@ -14,6 +15,39 @@ import {
 export default function SettingsScreen({ navigation }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { deleteAccount } = useAuth();
+
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deletePassword, setDeletePassword]         = useState('');
+  const [deleting, setDeleting]                     = useState(false);
+
+  function confirmDeleteAccount() {
+    Alert.alert(
+      'Eliminar cuenta',
+      'Esta acción es permanente: se borra tu cuenta y todos tus datos (perfil, historial de pasos, historial de gym). No se puede deshacer.\n\n¿Querés continuar?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Continuar', style: 'destructive', onPress: () => setDeleteModalVisible(true) },
+      ]
+    );
+  }
+
+  async function handleDeleteAccount() {
+    if (!deletePassword) return;
+    setDeleting(true);
+    try {
+      await deleteAccount(deletePassword);
+      // Si esto resuelve, AuthContext ya detectó la sesión cerrada y el resto
+      // de la app navega sola a la pantalla de login (mismo mecanismo que
+      // signOut) — no hace falta navegar manualmente desde acá.
+    } catch (e) {
+      Alert.alert('No se pudo eliminar la cuenta', e?.message ?? 'Ocurrió un error inesperado.');
+    } finally {
+      setDeleting(false);
+      setDeletePassword('');
+      setDeleteModalVisible(false);
+    }
+  }
 
   // notificationVisible = true → notificación normal visible
   // notificationVisible = false → canal silencioso (sin ícono en barra)
@@ -122,13 +156,70 @@ export default function SettingsScreen({ navigation }) {
           </View>
         )}
 
-        {!showStepToggle && !loading && (
-          <View style={styles.emptyState}>
-            <Ionicons name="settings-outline" size={44} color={colors.textTertiary} />
-            <Text style={styles.emptyText}>No hay configuraciones disponibles para este dispositivo.</Text>
-          </View>
-        )}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>CUENTA</Text>
+          <TouchableOpacity
+            style={styles.dangerRow}
+            onPress={confirmDeleteAccount}
+            activeOpacity={0.75}
+          >
+            <View style={[styles.rowIcon, { backgroundColor: colors.danger + '22' }]}>
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            </View>
+            <View style={styles.rowBody}>
+              <Text style={[styles.rowTitle, { color: colors.danger }]}>Eliminar cuenta</Text>
+              <Text style={styles.rowSub}>Borra tu cuenta y todos tus datos permanentemente</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      <Modal
+        visible={deleteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !deleting && setDeleteModalVisible(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Confirmá tu contraseña</Text>
+            <Text style={styles.modalSub}>
+              Por seguridad, ingresá tu contraseña para eliminar tu cuenta definitivamente.
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Contraseña"
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry
+              value={deletePassword}
+              onChangeText={setDeletePassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!deleting}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => { setDeleteModalVisible(false); setDeletePassword(''); }}
+                disabled={deleting}
+              >
+                <Text style={styles.modalCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalDeleteBtn, (!deletePassword || deleting) && { opacity: 0.5 }]}
+                onPress={handleDeleteAccount}
+                disabled={!deletePassword || deleting}
+              >
+                {deleting
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.modalDeleteText}>Eliminar</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -179,6 +270,16 @@ function makeStyles(colors) {
       padding:         spacing.md,
       gap:             spacing.md,
     },
+    dangerRow: {
+      flexDirection:   'row',
+      alignItems:      'center',
+      backgroundColor: colors.surface,
+      borderRadius:    radius.lg,
+      padding:         spacing.md,
+      gap:             spacing.md,
+      borderWidth:     1,
+      borderColor:     colors.danger + '33',
+    },
     rowIcon: {
       width:           36,
       height:          36,
@@ -221,16 +322,67 @@ function makeStyles(colors) {
       flex:       1,
       lineHeight: 18,
     },
-    emptyState: {
-      flex:           1,
-      alignItems:     'center',
-      justifyContent: 'center',
-      gap:            spacing.md,
+    modalBackdrop: {
+      flex:            1,
+      backgroundColor: colors.overlayMedium,
+      alignItems:      'center',
+      justifyContent:  'center',
+      padding:         spacing.xl,
     },
-    emptyText: {
+    modalCard: {
+      width:           '100%',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius:    radius.xl,
+      padding:         spacing.xl,
+    },
+    modalTitle: {
+      ...typography.h3,
+      color:        colors.text,
+      marginBottom: spacing.sm,
+    },
+    modalSub: {
+      ...typography.caption,
+      color:        colors.textSecondary,
+      lineHeight:   18,
+      marginBottom: spacing.lg,
+    },
+    modalInput: {
+      borderWidth:       1,
+      borderColor:       colors.border,
+      borderRadius:       radius.lg,
+      paddingHorizontal: spacing.md,
+      paddingVertical:   spacing.sm + 2,
+      color:             colors.text,
+      fontSize:          typography.sizes.base,
+      marginBottom:      spacing.lg,
+    },
+    modalActions: {
+      flexDirection: 'row',
+      gap:           spacing.md,
+    },
+    modalCancelBtn: {
+      flex:           1,
+      paddingVertical: spacing.sm + 4,
+      borderRadius:    radius.lg,
+      alignItems:      'center',
+      backgroundColor: colors.surface,
+    },
+    modalCancelText: {
       ...typography.body,
-      color:     colors.textTertiary,
-      textAlign: 'center',
+      color:      colors.text,
+      fontWeight: '600',
+    },
+    modalDeleteBtn: {
+      flex:            1,
+      paddingVertical: spacing.sm + 4,
+      borderRadius:    radius.lg,
+      alignItems:      'center',
+      backgroundColor: colors.danger,
+    },
+    modalDeleteText: {
+      ...typography.body,
+      color:      '#fff',
+      fontWeight: '700',
     },
   });
 }

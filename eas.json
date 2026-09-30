@@ -7,11 +7,31 @@
     "preview": {
       "android": {
         "buildType": "apk"
-      }
+      },
+      "channel": "preview"
     },
     "production": {
+      "autoIncrement": true,
       "android": {
         "buildType": "apk"
+      },
+      "ios": {
+        "image": "latest"
+      },
+      "channel": "production"
+    },
+    "playstore": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "channel": "playstore"
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "6809028788"
       }
     }
   }

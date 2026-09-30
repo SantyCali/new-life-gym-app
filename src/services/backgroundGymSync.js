@@ -13,6 +13,7 @@ import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getUserPresenceOnce, ACTIVE_MS } from './gymService';
 import { checkAndAwardGymReward } from './gamificationService';
+import { leerPrivado } from './perfilPrivadoService';
 
 const sessionKey = (uid) => `gymBgSessionEntryMs_${uid}`;
 // Ninguna visita real al gym dura más que esto — cota de seguridad para no
@@ -29,7 +30,7 @@ export async function checkGymPresenceInBackground(uid) {
   try {
     const userSnap = await getDoc(doc(db, 'users', uid));
     if (!userSnap.exists()) return;
-    const gymDni = userSnap.data().gymDni;
+    const { gymDni } = await leerPrivado(uid, userSnap.data());
     if (!gymDni) return;
 
     const { present, latestCheckinMs } = await getUserPresenceOnce(gymDni);

@@ -132,7 +132,7 @@ export default function LevelUpModal({ fromLevel, toLevel, onClose }) {
   });
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+    <Modal visible transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={StyleSheet.absoluteFill} onPress={dismiss}>
         <Animated.View style={[st.overlay, { opacity: overlayOpacity }]} />
       </Pressable>

@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-bg font-sans text-text antialiased;
+  }
+
+  h1, h2, h3 {
+    @apply font-display;
+  }
+
+  /* Anillo de foco visible en todo elemento interactivo: es lo que permite
+     manejar el panel enteramente con teclado. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.surfaceHighest') transparent;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full border-4 border-solid border-transparent bg-surfaceHighest bg-clip-content;
+  }
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg border border-border bg-surfaceLow px-3 py-2 text-sm text-text
+           placeholder:text-textTertiary transition-colors duration-200
+           hover:border-surfaceHighest focus:border-accent;
+  }
+
+  /* Etiqueta chica en mayúsculas, el recurso tipográfico que ordena todo el
+     tablero. */
+  .label {
+    @apply mb-1.5 block font-display text-[0.6875rem] font-bold uppercase
+           tracking-caps text-textSecondary;
+  }
+
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg px-4 py-2
+           font-display text-sm font-bold transition-all duration-200
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary { @apply btn bg-accent text-onAccent shadow-glowSoft hover:bg-accentDim hover:shadow-glow; }
+  .btn-ghost   { @apply btn text-textSecondary hover:bg-surfaceHigh hover:text-text; }
+  .btn-outline { @apply btn bg-surfaceHigh text-text hover:bg-surfaceHighest; }
+  .btn-danger  { @apply btn text-danger hover:bg-danger/10; }
+  .btn-sm      { @apply px-3 py-1.5 text-xs; }
+
+  .card {
+    @apply rounded-xl border border-border bg-surfaceContainer;
+  }
+
+  /* Cifras alineadas en columna: dígitos de ancho fijo. */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Número protagonista de las tarjetas de KPI. */
+  .kpi {
+    @apply num font-display text-4xl font-extrabold tracking-tight;
+  }
+
+  /* Luz ambiente lima arriba del centro, más dos halos fríos abajo: da
+     profundidad sin usar imágenes. */
+  .bg-ambient {
+    background-image:
+      radial-gradient(circle at 50% 18%, rgba(195, 244, 0, 0.08) 0%, transparent 48%),
+      radial-gradient(circle at 82% 85%, rgba(14, 22, 38, 0.6) 0%, transparent 50%),
+      radial-gradient(circle at 18% 75%, rgba(20, 30, 48, 0.4) 0%, transparent 45%);
+  }
+
+  .grid-overlay {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+
+  .icon {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+}
+
+/* Notificaciones de ingreso (react-toastify) con la paleta del panel.
+   Las variables van en .Toastify y no en :root: toastify inyecta las suyas en
+   :root después que las nuestras y las pisaba (por eso la barra salía violeta). */
+.Toastify {
+  --toastify-color-dark: #262a33;
+  --toastify-text-color-dark: #dfe2ee;
+  --toastify-color-progress-dark: #c3f400;
+  --toastify-font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --toastify-toast-bd-radius: 12px;
+}
+.Toastify__toast {
+  cursor: pointer;
+  border: 1px solid #31353e;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.35; transform: scale(0.95); }
+  50%      { opacity: 0.85; transform: scale(1.15); }
+}
+@keyframes rotate-ring { to { transform: rotate(360deg); } }
+@keyframes beam-sweep {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(10%); }
+  100% { transform: translateX(160%); }
+}
+/* Solo opacidad: animar box-shadow obliga a repintar en cada cuadro, y en una
+   PC vieja se nota. El halo queda fijo y lo que respira es el punto. */
+@keyframes dot-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes energy-wave {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+@layer components {
+  .pulse-glow  { animation: pulse-glow 3s ease-in-out infinite; }
+
+  /* Tarjetas en vivo: haz de luz que recorre la línea superior y punto de
+     estado que respira. */
+  .beam-sweep  { animation: beam-sweep 2s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+  .dot-breathe { animation: dot-breathe 1.6s ease-in-out infinite; }
+  .rotate-ring { animation: rotate-ring 6s linear infinite; }
+
+  .energy-bar {
+    background: linear-gradient(90deg, #c3f400 0%, #00dbe9 50%, #c3f400 100%);
+    background-size: 200% 100%;
+    animation: energy-wave 2s linear infinite;
+  }
+
+  .bg-grid-glow {
+    background-image:
+      radial-gradient(circle at 50% 50%, rgba(195, 244, 0, 0.08) 0%, transparent 60%),
+      linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 100% 100%, 48px 48px, 48px 48px;
+  }
+}
+

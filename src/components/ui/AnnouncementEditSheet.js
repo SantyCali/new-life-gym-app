@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import useAuth from '../../hooks/useAuth';
 import useUserProfile from '../../hooks/useUserProfile';
@@ -18,6 +19,7 @@ export default function AnnouncementEditSheet({ visible, announcement, onClose }
   const { theme: { colors } } = useTheme();
   const { user } = useAuth();
   const { profile } = useUserProfile();
+  const insets = useSafeAreaInsets();
 
   const [title,   setTitle]   = useState('');
   const [message, setMessage] = useState('');
@@ -60,10 +62,10 @@ export default function AnnouncementEditSheet({ visible, announcement, onClose }
   }, [onClose]);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <TouchableOpacity style={st.overlay} activeOpacity={1} onPress={onClose} />
-        <View style={[st.sheet, { backgroundColor: colors.background, borderColor: colors.borderLight }]}>
+        <View style={[st.sheet, { backgroundColor: colors.background, borderColor: colors.borderLight }, Platform.OS === 'android' && { paddingBottom: 24 + insets.bottom }]}>
           <View style={[st.handle, { backgroundColor: colors.borderLight }]} />
           <Text style={[st.sheetTitle, { color: colors.text }]}>
             {announcement ? 'Editar Anuncio' : 'Nuevo Anuncio'}

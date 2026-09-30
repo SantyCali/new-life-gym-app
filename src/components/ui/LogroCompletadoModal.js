@@ -131,7 +131,7 @@ export default function LogroCompletadoModal({ logro, onClose }) {
   });
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={() => {}} statusBarTranslucent>
+    <Modal visible transparent animationType="none" onRequestClose={() => {}} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={StyleSheet.absoluteFill} onPress={() => {}}>
         <Animated.View style={[st.overlay, { opacity: overlayOpacity }]} />
       </Pressable>

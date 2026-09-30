@@ -32,7 +32,7 @@ export default function GoalModal({ input, onChangeInput, onSave, onClose, color
   };
 
   return (
-    <Modal transparent visible animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+    <Modal transparent visible animationType="none" onRequestClose={dismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={[st.backdrop, { backgroundColor: 'rgba(0,0,0,0.72)' }]} onPress={dismiss}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={st.kav}>
           <Pressable onPress={() => {}}>

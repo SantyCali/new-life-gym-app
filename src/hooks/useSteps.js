@@ -4,6 +4,7 @@ import {
   requestPedometerPermission,
   isPedometerAvailable,
   getStepsSinceMidnight,
+  pedirPermisoSalud,
   watchStepCount,
   loadStepData,
   saveStepData,
@@ -41,6 +42,7 @@ export default function useSteps(uid) {
   const pollIntervalRef   = useRef(null);
   const fbSaveTimerRef    = useRef(null);
   const uidRef            = useRef(null);
+  const saludTimerRef     = useRef(null);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -111,13 +113,22 @@ export default function useSteps(uid) {
         if (!mountedRef.current) return;
         setAvailable(ok);
         if (!ok) { setLoading(false); return; }
+        // Permiso para leer Salud (pasos del iPhone + Apple Watch).
+        await pedirPermisoSalud();
         await refreshIOS();
         if (!mountedRef.current) return;
         setLoading(false);
+        // Para que iOS acredite pasos y puntos con la app cerrada.
+        registerBackgroundStepsSync().catch(() => {});
         subRef.current = watchStepCount(() => refreshIOS());
         appStateSub = AppState.addEventListener('change', s => {
           if (s === 'active') refreshIOS();
         });
+        // Los pasos del Apple Watch llegan a Salud de a tandas, sin que el
+        // sensor del iPhone se mueva: se relee cada 30 s con la app abierta.
+        saludTimerRef.current = setInterval(() => {
+          if (AppState.currentState === 'active') refreshIOS();
+        }, 30 * 1000);
         return;
       }
 
@@ -230,6 +241,7 @@ export default function useSteps(uid) {
     return () => {
       mountedRef.current = false;
       clearInterval(pollIntervalRef.current);
+      clearInterval(saludTimerRef.current);
       clearTimeout(fbSaveTimerRef.current);
       subRef.current?.remove();
       appStateSub?.remove();

@@ -1,5 +1,6 @@
-import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
+import { crearPerfil, guardarPerfil, separarCampos } from './perfilPrivadoService';
 
 const USERS_COLLECTION = 'users';
 
@@ -12,8 +13,7 @@ export async function createUserDocument(uid, profile) {
     photoBase64,
   } = profile;
 
-  const userRef = doc(db, USERS_COLLECTION, uid);
-  await setDoc(userRef, {
+  const datos = {
     nombre:          nombre ?? null,
     apellido:        apellido ?? null,
     email:           email ?? null,
@@ -32,12 +32,15 @@ export async function createUserDocument(uid, profile) {
     fechaRegistro: serverTimestamp(),
     rol:       'usuario',
     gimnasio:  null,
-  });
+  };
+  // Los datos personales van aparte (ver perfilPrivadoService). false = el
+  // DNI ya es de otra cuenta.
+  const { publico, privado } = separarCampos(datos);
+  return crearPerfil(uid, publico, privado);
 }
 
 export async function updateUserProfile(uid, updates) {
-  const userRef = doc(db, USERS_COLLECTION, uid);
-  await updateDoc(userRef, updates);
+  await guardarPerfil(uid, updates);
 }
 
 function todayStr() {
@@ -56,7 +59,7 @@ export async function addWeightEntry(uid, weight) {
   await setDoc(doc(db, USERS_COLLECTION, uid, 'weightHistory', date), {
     weight: Number(weight), date,
   });
-  await updateDoc(doc(db, USERS_COLLECTION, uid), { peso: Number(weight) });
+  await guardarPerfil(uid, { peso: Number(weight) });
 }
 
 export async function deleteWeightEntry(uid, date) {
