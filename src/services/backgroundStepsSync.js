@@ -34,12 +34,16 @@ import { checkGymPresenceInBackground } from './backgroundGymSync';
 import { programarAvisosDeCuota } from './avisoCuotaService';
 import { leerPrivado } from './perfilPrivadoService';
 import { doc, getDoc } from 'firebase/firestore';
+import { acreditarVisitasGym } from './visitasGymService';
+import { avisarSiEstaCerca } from './avisoMetaService';
 
 export const BACKGROUND_STEPS_TASK = 'nlg-background-steps-sync';
 
-// Días que se revisan hacia atrás. El sensor del iPhone guarda 7 días; en
-// Android el servicio nativo guarda 14.
-const DIAS_ATRAS = 6;
+// Días que se revisan hacia atrás: 30, para que nadie pierda pasos aunque no
+// abra la app en semanas. En iPhone, Salud guarda todo el historial (el
+// sensor solo 7 días: getStepsForDate toma el mayor de los dos). En Android
+// el servicio nativo guarda los últimos 30 días.
+const DIAS_ATRAS = 30;
 
 // Pasos de hoy y de los días anteriores disponibles en este celular, como
 // { 'YYYY-MM-DD': pasos }. Lo usan la tarea en segundo plano y StepContext al
@@ -81,6 +85,16 @@ export async function sincronizarPasosYPuntos(uid) {
     await clearPendingHistorySync();
   }
   await cortarRachaSiSeRompio(uid);
+  // Visitas al gym de los últimos 30 días que no se hayan acreditado (aunque
+  // la app haya estado cerrada mientras estaba en sala).
+  try {
+    const pub = await getDoc(doc(db, 'users', uid));
+    // Aviso "estás muy cerca de tu meta" (80%), una vez por día.
+    const hoy = todayDateString();
+    await avisarSiEstaCerca(uid, hoy, pasos[hoy] ?? 0, pub.data()?.dailyStepGoal ?? 10000, pub.data()?.rol).catch(() => {});
+    const { gymDni } = await leerPrivado(uid, pub.exists() ? pub.data() : {});
+    await acreditarVisitasGym(uid, gymDni);
+  } catch {}
   // Foto de sus puntos en los torneos en curso (ver torneoService).
   await actualizarMisTorneos(uid).catch(() => {});
   // Avisos de torneos (te sumaron / terminó), también con la app cerrada.
@@ -109,6 +123,21 @@ function waitForAuthUser(timeoutMs = 5000) {
 
 // defineTask debe correr en el scope global (no dentro de un componente) para
 // que el sistema operativo pueda invocar la tarea aunque la app esté cerrada.
+// Lo mismo que la tarea de segundo plano, para llamarlo desde otros lados
+// (servicio de pasos de Android, aviso de Salud en iPhone).
+let enCurso = null;
+export function sincronizarEnSegundoPlano() {
+  // Si ya hay una corriendo (tarea + aviso juntos), no se larga otra.
+  if (!enCurso) enCurso = sincronizarAhora().finally(() => { enCurso = null; });
+  return enCurso;
+}
+
+async function sincronizarAhora() {
+  const user = await waitForAuthUser();
+  if (!user?.uid) return;
+  await sincronizarPasosYPuntos(user.uid);
+}
+
 TaskManager.defineTask(BACKGROUND_STEPS_TASK, async () => {
   try {
     const user = await waitForAuthUser();

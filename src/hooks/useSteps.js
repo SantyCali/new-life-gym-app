@@ -15,6 +15,7 @@ import {
   nativeServiceAvailable,
   startNativeStepService,
   getNativeSteps,
+  leerRelojAhora,
 } from '../services/nativeStepService';
 import {
   syncStepsWithFirebase,
@@ -23,7 +24,15 @@ import {
 import { registerBackgroundStepsSync } from '../services/backgroundStepsSync';
 
 export default function useSteps(uid) {
-  const [steps, setSteps]         = useState(0);
+  const [steps, setStepsState]    = useState(0);
+  // Día al que corresponden esos pasos. Se guarda junto con ellos porque se
+  // usan después (al guardar en Firebase, al acreditar puntos): si mientras
+  // tanto pasó la medianoche, los pasos de ayer quedaban guardados como de hoy.
+  const [stepsDate, setStepsDate] = useState(todayDateString());
+  const setSteps = useCallback((n, fecha = todayDateString()) => {
+    setStepsState(n);
+    setStepsDate(fecha);
+  }, []);
   const [available, setAvailable] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [hcStatus, setHcStatus]   = useState(
@@ -49,20 +58,21 @@ export default function useSteps(uid) {
   const setAndPersist = useCallback((todaySteps, lastAccumulated) => {
     const date = todayDateString();
     dataRef.current = { date, todaySteps, lastAccumulated };
-    setSteps(todaySteps);
+    setSteps(todaySteps, date);
     saveStepData({ date, todaySteps, lastAccumulated });
-  }, []);
+  }, [setSteps]);
 
   const refreshIOS = useCallback(async () => {
     if (!mountedRef.current) return;
     try {
+      const fecha = todayDateString();
       const s = await getStepsSinceMidnight();
       if (mountedRef.current) {
-        setSteps(s);
-        saveStepData({ date: todayDateString(), todaySteps: s, lastAccumulated: 0 });
+        setSteps(s, fecha);
+        saveStepData({ date: fecha, todaySteps: s, lastAccumulated: 0 });
       }
     } catch {}
-  }, []);
+  }, [setSteps]);
 
   // ── Android: sensor expo-sensors (fallback cuando el Foreground Service no está disponible)
 
@@ -143,29 +153,40 @@ export default function useSteps(uid) {
         registerBackgroundStepsSync().catch(() => {});
 
         // Leer pasos locales y sincronizar con Firebase al arrancar
-        const raw = await getNativeSteps();
         const today = todayDateString();
+        const raw = await getNativeSteps();
         const synced = await syncStepsWithFirebase(uidRef.current, today, raw);
-        if (mountedRef.current) setSteps(synced);
+        if (mountedRef.current) setSteps(synced, today);
         setLoading(false);
 
-        // Guardar en Firebase cada 30s (throttle para no abusar de escrituras)
-        const scheduleFbSave = (s) => {
+        // Guardar en Firebase cada 30s (throttle para no abusar de escrituras).
+        // Con la fecha de cuando se midieron: antes se tomaba la de cuando se
+        // guardaba, y si en esos 30 s pasaba la medianoche, los pasos de ayer
+        // (p. ej. 831) quedaban guardados como de hoy.
+        const scheduleFbSave = (s, fecha) => {
           clearTimeout(fbSaveTimerRef.current);
           fbSaveTimerRef.current = setTimeout(() => {
-            saveStepsToFirebase(uidRef.current, todayDateString(), s).catch(() => {});
+            saveStepsToFirebase(uidRef.current, fecha, s).catch(() => {});
           }, 30_000);
         };
 
-        // Poll cada 1 s para animación fluida
+        // Poll cada 1 s para animación fluida. Con la app abierta, además, el
+        // reloj (Health Connect) se lee cada minuto en vez de cada 5: apenas
+        // la app del reloj (Mi Fitness…) sincroniza, el contador sube. Si no
+        // hay reloj conectado, el servicio no hace nada.
+        let segundos = 0;
         const startPoll = () => {
           clearInterval(pollIntervalRef.current);
+          leerRelojAhora();
+          segundos = 0;
           pollIntervalRef.current = setInterval(async () => {
             if (!mountedRef.current) return;
+            if (++segundos % 60 === 0) leerRelojAhora();
+            const fecha = todayDateString();
             const s = await getNativeSteps();
             if (mountedRef.current) {
-              setSteps(s);
-              scheduleFbSave(s);
+              setSteps(s, fecha);
+              scheduleFbSave(s, fecha);
             }
           }, 1000);
         };
@@ -174,17 +195,21 @@ export default function useSteps(uid) {
         appStateSub = AppState.addEventListener('change', async (state) => {
           if (!mountedRef.current) return;
           if (state === 'active') {
+            const fecha = todayDateString();
             const s = await getNativeSteps();
             // Sincronizar con Firebase al volver al frente (multi-dispositivo)
-            const merged = await syncStepsWithFirebase(uidRef.current, todayDateString(), s);
-            if (mountedRef.current) setSteps(merged);
+            const merged = await syncStepsWithFirebase(uidRef.current, fecha, s);
+            if (mountedRef.current) setSteps(merged, fecha);
             startPoll();
           } else if (state === 'background' || state === 'inactive') {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
-            // Guardar inmediatamente al ir al fondo
+            // Se guarda ya (abajo): el guardado pendiente se descarta, que si
+            // no salía al volver (horas después, con otra fecha).
+            clearTimeout(fbSaveTimerRef.current);
+            const fecha = todayDateString();
             const s = await getNativeSteps();
-            saveStepsToFirebase(uidRef.current, todayDateString(), s).catch(() => {});
+            saveStepsToFirebase(uidRef.current, fecha, s).catch(() => {});
           }
         });
         return;
@@ -197,7 +222,7 @@ export default function useSteps(uid) {
 
       const saved = await loadStepData();
       if (saved.date === todayDateString() && mountedRef.current) {
-        setSteps(saved.todaySteps);
+        setSteps(saved.todaySteps, saved.date);
         dataRef.current = saved;
       }
       setLoading(false);
@@ -247,9 +272,9 @@ export default function useSteps(uid) {
       appStateSub?.remove();
       clearTimeout(midnightTimerRef.current);
     };
-  }, [refreshIOS, startFallbackPath]);
+  }, [refreshIOS, startFallbackPath, setSteps]);
 
   const connectHC = useCallback(async () => {}, []);
 
-  return { steps, available, loading, hcStatus, connectHC };
+  return { steps, stepsDate, available, loading, hcStatus, connectHC };
 }

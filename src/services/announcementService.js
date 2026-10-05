@@ -36,7 +36,7 @@ export async function sendAnnouncementNotification({ title, message }) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(
-        batch.map(to => ({ to, title, body: message, sound: 'default', channelId: 'default' }))
+        batch.map(to => ({ to, title, body: message, sound: 'default', channelId: 'default', priority: 'high' }))
       ),
     });
   }

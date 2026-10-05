@@ -24,6 +24,20 @@ import {
   subscribeToBodyWeightHistory,
 } from '../../services/progressService';
 import { fetchWeeklyStepHistory } from '../../services/userService';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+
+// "hace 5 min", "hace 2 h"… de la última vez que el celular del alumno subió
+// los pasos de hoy (con la app cerrada lo hace el servicio de pasos).
+function haceCuanto(fecha) {
+  if (!fecha) return null;
+  const min = Math.max(0, Math.round((Date.now() - fecha.getTime()) / 60000));
+  if (min < 1) return 'recién';
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  return `hace ${Math.floor(h / 24)} d`;
+}
 import { todayDateString, localDateString, calcCalories, computeAge } from '../../services/stepService';
 
 const DAY_ABBR = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
@@ -53,6 +67,7 @@ export default function ClientProgressScreen({ route, navigation }) {
   const [stepsMap, setStepsMap]         = useState({});
   const [stepsLoading, setStepsLoading] = useState(true);
   const [dayOffset, setDayOffset]       = useState(0); // 0=hoy, -1=ayer, …, -6
+  const [subidoHoy, setSubidoHoy]       = useState(null); // Date de la última subida de hoy
 
   useFocusEffect(useCallback(() => {
     if (!cliente?.uid) return;
@@ -62,6 +77,9 @@ export default function ClientProgressScreen({ route, navigation }) {
       fetchWeeklyStepHistory(cliente.uid)
         .then(map => { if (!cancelled) { setStepsMap(map); setStepsLoading(false); } })
         .catch(() => { if (!cancelled) setStepsLoading(false); });
+      getDoc(doc(db, 'users', cliente.uid, 'stepsHistory', todayDateString()))
+        .then(snap => { if (!cancelled) setSubidoHoy(snap.data()?.actualizadoEn?.toDate?.() ?? null); })
+        .catch(() => {});
     };
 
     load();
@@ -223,6 +241,7 @@ export default function ClientProgressScreen({ route, navigation }) {
                       <Text style={styles.stepsBig}>{selectedSteps.toLocaleString('es-AR')}</Text>
                       <Text style={styles.stepsSub}>
                         pasos · {stepsDayLabel}{stepsDateLabel ? ` · ${stepsDateLabel}` : ''}
+                        {dayOffset === 0 && haceCuanto(subidoHoy) ? ` · actualizado ${haceCuanto(subidoHoy)}` : ''}
                       </Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />

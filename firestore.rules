@@ -255,12 +255,29 @@ service cloud.firestore {
       allow write: if esMio(uid) && esEntrenador();
     }
 
+    // Actividad en la app (en vivo, aperturas, versión): cada uno escribe la
+    // suya; solo los testers la ven (pantalla Actividad).
+    match /actividad/{uid} {
+      allow write: if esMio(uid);
+      allow read: if logueado() && tieneRol('tester');
+    }
+
+    // Código de notificaciones de cada usuario, para que otro le pueda
+    // avisar (por ejemplo, al sumarlo a un torneo). Cada uno escribe el suyo.
+    match /pushTokens/{uid} {
+      allow read: if logueado();
+      allow write: if esMio(uid);
+    }
+
     // ── Torneos entre amigos ───────────────────────────────────────────────
 
     function fotoValida(fila) {
       let real = get(/databases/$(database)/documents/users/$(fila.uid)).data;
       return fila.get('xpTotalFin', 0) <= real.get('xpTotal', 0)
-        && fila.get('gymFin', 0) <= real.get('gymVisitCount', 0);
+        && fila.get('gymFin', 0) <= real.get('gymVisitCount', 0)
+        // Puntos por día de actividad: nunca más que los totales reales.
+        && fila.get('xpTorneo', 0) <= real.get('xpTotal', 0)
+        && fila.get('gymTorneo', 0) <= real.get('gymVisitCount', 0);
     }
 
     function participaDe(torneoId) {
@@ -274,8 +291,14 @@ service cloud.firestore {
                     && request.resource.data.creadoPor == request.auth.uid
                     && request.resource.data.participantUids == [request.auth.uid];
       // Los participantes invitan amigos; el creador lo finaliza.
+      // Cambiar el creador: solo el creador, cuando sale del torneo y se lo
+      // pasa a otro participante.
       allow update: if logueado() && request.auth.uid in resource.data.get('participantUids', [])
-                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fechaFin', 'fechaInicio', 'creadoPor']);
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fechaFin', 'fechaInicio'])
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['creadoPor'])
+                        || (resource.data.creadoPor == request.auth.uid
+                            && !(request.auth.uid in request.resource.data.get('participantUids', []))
+                            && request.resource.data.creadoPor in request.resource.data.get('participantUids', [])));
       allow delete: if logueado() && (resource.data.creadoPor == request.auth.uid || esEntrenador());
 
       match /participantes/{p} {
@@ -289,7 +312,10 @@ service cloud.firestore {
                       && (resource.data.uid == request.auth.uid
                           || get(/databases/$(database)/documents/torneos/$(torneoId)).data.creadoPor == request.auth.uid)
                       && fotoValida(request.resource.data);
-        allow delete: if participaDe(torneoId);
+        // Sacar a alguien: solo el creador. Salirse: uno mismo.
+        allow delete: if participaDe(torneoId)
+                      && (resource.data.uid == request.auth.uid
+                          || get(/databases/$(database)/documents/torneos/$(torneoId)).data.creadoPor == request.auth.uid);
       }
     }
   }

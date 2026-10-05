@@ -2,12 +2,12 @@ import React, { useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '../context/ThemeContext';
+import { useThemeInstantaneo } from '../context/ThemeContext';
 import { buildTheme } from '../theme/themes';
 import { typography, spacing, radius } from '../theme';
 
 export default function AspectoScreen({ navigation }) {
-  const { theme, themeMode, accentColorId, accentColors, setThemeMode, setAccentColor } = useTheme();
+  const { theme, themeMode, accentColorId, accentColors, setThemeMode, setAccentColor } = useThemeInstantaneo();
   const { colors, isDark } = theme;
   const styles = useMemo(() => makeStyles(colors), [colors]);
 

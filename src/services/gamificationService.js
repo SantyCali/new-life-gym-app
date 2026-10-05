@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { doc, getDoc, updateDoc, increment, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, increment, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { todayDateString, localDateString } from './stepService';
 
@@ -62,11 +62,19 @@ export async function checkAndAwardGymReward(uid) {
   if (!uid) return false;
   const today = todayDateString();
   const ref = doc(db, 'users', uid);
+  // Misma marca por día que visitasGymService: la visita se da una sola vez,
+  // la acredite "en sala" o el historial de ingresos.
+  const visitaRef = doc(db, 'users', uid, 'visitasGym', today);
   return await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
+    const visita = await tx.get(visitaRef);
     if (!snap.exists()) return false;
     const { lastGymRewardDate, xp = 0, nivelJuego = 1 } = snap.data();
-    if (lastGymRewardDate === today) return false;
+    if (visita.exists()) return false;
+    if (lastGymRewardDate === today) {
+      tx.set(visitaRef, { fecha: today, xp: XP_GYM_VISIT, en: serverTimestamp() });
+      return false;
+    }
     const updated = applyXPGain(xp, nivelJuego, XP_GYM_VISIT);
     tx.update(ref, {
       ...updated,
@@ -76,6 +84,7 @@ export async function checkAndAwardGymReward(uid) {
       lastGymRewardDate: today,
       gymVisitCount:     increment(1),
     });
+    tx.set(visitaRef, { fecha: today, xp: XP_GYM_VISIT, en: serverTimestamp() });
     return true;
   });
 }

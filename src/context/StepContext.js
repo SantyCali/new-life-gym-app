@@ -16,6 +16,7 @@ import {
 import { subscribeToUserPresence } from '../services/gymService';
 import { sincronizarPasosYPuntos } from '../services/backgroundStepsSync';
 import { acreditarPasosDelDia, xpPorPasos } from '../services/stepRewardsService';
+import { avisarSiEstaCerca } from '../services/avisoMetaService';
 
 const DEFAULT_GOAL = 10000;
 const GOAL_KEY = 'dailyStepGoal'; // misma clave que usaban Inicio y Racha
@@ -24,7 +25,7 @@ const StepContext  = createContext(null);
 
 export function StepProvider({ children }) {
   const { user }    = useAuth();
-  const { steps, available, loading, hcStatus, connectHC } = useSteps(user?.uid);
+  const { steps, stepsDate, available, loading, hcStatus, connectHC } = useSteps(user?.uid);
   const { profile } = useUserProfile();
 
   const weightKg = profile?.peso    ? Number(profile.peso)   : 70;
@@ -121,19 +122,27 @@ export function StepProvider({ children }) {
     sincronizarPasosYPuntos(user.uid).catch(() => {});
   }, [user?.uid, available, loading]);
 
+  // Aviso "estás muy cerca de tu meta" (80%) en el momento, con la app abierta.
+  useEffect(() => {
+    if (user?.uid && stepsDate === todayDateString()) avisarSiEstaCerca(user.uid, stepsDate, steps, goal, profile?.rol).catch(() => {});
+  }, [steps, stepsDate, goal, user?.uid, profile?.rol]);
+
   // ── Pasos y puntos de hoy, en vivo ───────────────────────────────────────────
   // Se acredita cada 250 pasos o cuando cambian los puntos que corresponden
   // (cada mil pasos, la meta o un hito). Los puntos ya no se calculan acá: se
   // calculan en stepRewardsService, igual para la app abierta y cerrada.
-  const lastSyncedRef = useRef({ steps: 0, xp: 0 });
-  const acreditarHoy = useRef(async (uid, currentSteps, goalActual) => {
-    if (!uid || !(currentSteps > 0)) return;
-    lastSyncedRef.current = { steps: currentSteps, xp: xpPorPasos(currentSteps, goalActual) };
+  // Lo último acreditado, con su día: al pasar la medianoche con la app
+  // abierta, comparar contra los pasos de ayer frenaba los de hoy.
+  const lastSyncedRef = useRef({ fecha: null, steps: 0, xp: 0 });
+  const acreditarHoy = useRef(async (uid, currentSteps, goalActual, fecha) => {
+    if (!uid || !(currentSteps > 0) || !fecha) return;
+    lastSyncedRef.current = { fecha, steps: currentSteps, xp: xpPorPasos(currentSteps, goalActual) };
     try {
-      await acreditarPasosDelDia(uid, todayDateString(), currentSteps);
+      // El día en que se midieron esos pasos (no "hoy" al momento de guardar).
+      await acreditarPasosDelDia(uid, fecha, currentSteps);
     } catch {
       // Sin conexión: se reintenta en el próximo cambio o al ir a segundo plano.
-      lastSyncedRef.current = { steps: 0, xp: 0 };
+      lastSyncedRef.current = { fecha: null, steps: 0, xp: 0 };
     }
   }).current;
 
@@ -141,17 +150,17 @@ export function StepProvider({ children }) {
   // bono de meta y el día de racha se acreditan en el momento.
   useEffect(() => {
     if (!user?.uid || !available || loading) return;
-    const prev = lastSyncedRef.current;
+    const prev = lastSyncedRef.current.fecha === stepsDate ? lastSyncedRef.current : { steps: 0, xp: 0 };
     const xpAhora = xpPorPasos(steps, goal);
-    if (steps - prev.steps >= 250 || xpAhora > prev.xp) acreditarHoy(user.uid, steps, goal);
-  }, [steps, goal, user?.uid, available, loading, acreditarHoy]);
+    if (steps - prev.steps >= 250 || xpAhora > prev.xp) acreditarHoy(user.uid, steps, goal, stepsDate);
+  }, [steps, stepsDate, goal, user?.uid, available, loading, acreditarHoy]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'background' && user?.uid) acreditarHoy(user.uid, steps, goal);
+      if (state === 'background' && user?.uid) acreditarHoy(user.uid, steps, goal, stepsDate);
     });
     return () => sub.remove();
-  }, [steps, goal, user?.uid, acreditarHoy]);
+  }, [steps, stepsDate, goal, user?.uid, acreditarHoy]);
 
   // Racha: la suma stepRewardsService cuando un día llega a la meta, y la corta
   // sincronizarPasosYPuntos (arriba) DESPUÉS de acreditar los días anteriores.

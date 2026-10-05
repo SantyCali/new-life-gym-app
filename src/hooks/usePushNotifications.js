@@ -4,6 +4,8 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { guardarPerfil } from '../services/perfilPrivadoService';
 import { registrarPushEntrenador } from '../services/avisosService';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase';
 
 // Evaluated once at module load — no Notifications import needed here
 const IS_EXPO_GO = Constants.executionEnvironment === 'storeClient';
@@ -65,7 +67,11 @@ async function register(userId, esEntrenador) {
     const { data: token } = await Notifications.getExpoPushTokenAsync(
       projectId ? { projectId } : undefined,
     );
-    await guardarPerfil(userId, { expoPushToken: token });
+    // Para que otros te puedan avisar (por ejemplo, al sumarte a un torneo).
+    // Primero y por separado: antes, si fallaba guardar el perfil, esto no
+    // se guardaba nunca y a esa persona no le llegaba ningún aviso.
+    await setDoc(doc(db, 'pushTokens', userId), { token, actualizadoEn: serverTimestamp() }).catch(() => {});
+    await guardarPerfil(userId, { expoPushToken: token }).catch(() => {});
     // Entrenadores: el código también va donde los alumnos lo pueden leer,
     // para avisarles cuando se arman o modifican su rutina.
     if (esEntrenador) await registrarPushEntrenador(userId, token).catch(() => {});

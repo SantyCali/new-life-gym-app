@@ -3,11 +3,15 @@ import {
   serverTimestamp, query, orderBy, where, Timestamp, getDocs, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { todayDateString } from './stepService';
 import { duenoDelDni } from './perfilPrivadoService';
 
 const COL = collection(db, 'ingresosActivos');
 export const ACTIVE_MS = 90 * 60 * 1000; // 1 h 30 min
+// Ninguna sesión de gym medida por la app pasa de 3 horas: si da más, es un
+// error de medición (una salida detectada tarde o un ingreso viejo).
+export const TOPE_MINUTOS_GYM = 180;
 // Ingresos desde la medianoche (o desde hace 90 min, si es más temprano):
 // alcanzan para los que están ahora y para el total del día.
 export function subscribeToGymCheckins(onData) {
@@ -32,8 +36,11 @@ export async function addCheckin(nombre, dni = '') {
   });
 }
 
+// "Retirar": marca la salida con la hora (igual que el panel web), no borra el
+// ingreso. Antes se borraba: se perdía la visita del historial y no se podía
+// saber cuánto tiempo estuvo (minutos y calorías del gym).
 export async function removeCheckin(id) {
-  await deleteDoc(doc(db, 'ingresosActivos', id));
+  await updateDoc(doc(db, 'ingresosActivos', id), { activo: false, salidaEn: serverTimestamp() });
 }
 
 // URL del Web App de Apps Script para sincronizar ediciones al Excel.
@@ -162,6 +169,52 @@ export async function getSocioByDni(dni) {
   const snap = await getDoc(doc(db, 'socios', dni.trim()));
   if (!snap.exists()) return null;
   return { id: snap.id, ...snap.data() };
+}
+
+// ── Análisis (rápido) ─────────────────────────────────────────────────────────
+// Antes cada vez que se abría (y al pasar de semana a mes) se bajaban de nuevo
+// todos los ingresos del período. Ahora se baja UNA vez el mes (y la semana se
+// cuenta de esos mismos datos), se guarda en el celular solo la hora de cada
+// ingreso, y al abrir se muestra al instante lo guardado mientras se actualiza.
+const CLAVE_ANALITICA = 'analiticaIngresos_v1';
+const FRESCO_MS = 2 * 60 * 1000;   // menos de 2 min: ni se vuelve a pedir
+let analitica = null;               // { en, horas: [ms, ...] } de los últimos 30 días
+
+function contarIngresos(horas, days) {
+  const desde = Date.now() - days * 24 * 60 * 60 * 1000;
+  const byHour    = Array(24).fill(0);
+  const byDay     = Array(7).fill(0);
+  const byDayHour = Array(7).fill(null).map(() => Array(24).fill(0)); // [día][hora]
+  for (const ms of horas) {
+    if (ms <= desde) continue;
+    const date = new Date(ms);
+    const h = date.getHours();
+    const day = date.getDay();
+    byHour[h]++;
+    byDay[day]++;
+    byDayHour[day][h]++;
+  }
+  return { byHour, byDay, byDayHour };
+}
+
+// Lo último guardado (en memoria o en el celular), o null. Instantáneo.
+export async function analiticaGuardada(days) {
+  if (!analitica) {
+    try { analitica = JSON.parse((await AsyncStorage.getItem(CLAVE_ANALITICA)) ?? 'null'); } catch {}
+  }
+  return analitica ? contarIngresos(analitica.horas, days) : null;
+}
+
+// Pide a Firebase los ingresos del mes (si lo guardado tiene más de 2 min).
+export async function actualizarAnalitica(days) {
+  if (!analitica || Date.now() - analitica.en > FRESCO_MS) {
+    const cutoff = Timestamp.fromMillis(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const snap = await getDocs(query(COL, where('fechaHora', '>', cutoff)));
+    const horas = snap.docs.map((d) => d.data().fechaHora?.toMillis?.()).filter(Boolean);
+    analitica = { en: Date.now(), horas };
+    AsyncStorage.setItem(CLAVE_ANALITICA, JSON.stringify(analitica)).catch(() => {});
+  }
+  return contarIngresos(analitica.horas, days);
 }
 
 export async function getCheckinAnalytics(days = 30) {

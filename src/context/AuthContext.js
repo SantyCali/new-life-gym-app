@@ -3,6 +3,8 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../firebase';
+import { firebaseConfig } from '../firebase/firebaseConfig';
+import { darSesionAlServicio, sacarSesionAlServicio } from '../services/nativeStepService';
 
 const SESSION_KEY = 'nlg_session_active';
 import {
@@ -41,6 +43,12 @@ export function AuthProvider({ children }) {
       if (firebaseUser) {
         // Sesión activa — guardar flag para el retry al próximo arranque
         AsyncStorage.setItem(SESSION_KEY, '1').catch(() => {});
+        // Android: el servicio de pasos sube los pasos con esta sesión aunque
+        // la app esté cerrada (ver modules/PasosEnLaNube.kt).
+        darSesionAlServicio(
+          firebaseUser.uid, firebaseUser.refreshToken,
+          firebaseConfig.apiKey, firebaseConfig.projectId,
+        );
         try {
           // Acotado con timeout: la identidad ya la confirmó Firebase Auth
           // (rápido, no depende de Firestore). Si la búsqueda del rol se
@@ -117,6 +125,7 @@ export function AuthProvider({ children }) {
     setAuthLoading(true);
     try {
       await AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+      await sacarSesionAlServicio();
       await logoutService();
     } catch (error) {
       setAuthError(error.message);

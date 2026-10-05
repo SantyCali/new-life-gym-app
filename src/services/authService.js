@@ -76,9 +76,13 @@ export async function deleteAccount(password) {
   const uid = user.uid;
   try {
     await borrarPrivado(uid);
-    for (const sub of ['stepsHistory', 'gymHistory', 'weightHistory']) {
-      const snap = await getDocs(collection(db, 'users', uid, sub));
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+    for (const sub of ['stepsHistory', 'gymHistory', 'weightHistory', 'visitasGym', 'rutinasGuardadas']) {
+      const snap = await getDocs(collection(db, 'users', uid, sub)).catch(() => null);
+      if (snap) await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+    }
+    // Lo que vive fuera del perfil: actividad en la app y códigos de notificación.
+    for (const ruta of ['actividad', 'pushTokens', 'pushEntrenadores']) {
+      await deleteDoc(doc(db, ruta, uid)).catch(() => {});
     }
     await deleteDoc(doc(db, 'users', uid));
   } catch {

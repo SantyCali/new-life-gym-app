@@ -44,6 +44,7 @@ export async function avisarRutinaDelAlumno({ uid, nombre, apellido, nueva }) {
         body: `${alumno} ${accion}`,
         sound: 'default',
         channelId: 'default',
+        priority: 'high',
         data: { tipo: 'rutina', alumnoUid: uid },
       }))),
     });

@@ -49,8 +49,7 @@ export default function TabNavigator() {
   return (
     <Tab.Navigator
       tabBar={(props) => <PremiumTabBar {...props} />}
-      // Las pestañas que no se ven no se redibujan (p. ej. al cambiar el color).
-      screenOptions={{ headerShown: false, freezeOnBlur: true }}
+      screenOptions={{ headerShown: false }}
     >
       <Tab.Screen name="Inicio" component={HomeScreen}   />
       <Tab.Screen name="Rutina" component={RutinaScreen} />

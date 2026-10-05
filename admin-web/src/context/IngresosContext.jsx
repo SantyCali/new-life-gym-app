@@ -5,6 +5,7 @@ import { subscribeIngresosDesde } from '../services/asistenciasService';
 import { useSocios } from './SociosContext';
 import useAhora from '../hooks/useAhora';
 import Avatar from '../components/Avatar';
+import { entroVencido } from '../services/estadoCuota';
 
 const IngresosContext = createContext(null);
 
@@ -63,7 +64,7 @@ export function useIngresos() {
 
 function notificarIngreso(ingreso, socios, navigate) {
   const socio   = socios.find((s) => s.dni === ingreso.dni);
-  const vencido = ingreso.estado === 'VENCIDO';
+  const vencido = entroVencido(ingreso, socio);
   const hora    = (ingreso.fechaHora?.toDate?.() ?? new Date())
     .toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 
@@ -81,7 +82,7 @@ function notificarIngreso(ingreso, socios, navigate) {
           Ingresó a las {hora}
           {' · '}
           <span className={vencido ? 'font-bold text-danger' : 'font-bold text-accent'}>
-            {ingreso.estado === 'manual' ? 'carga manual' : vencido ? 'cuota vencida' : 'al día'}
+            {ingreso.estado === 'manual' ? (vencido ? 'carga manual · cuota vencida' : 'carga manual') : vencido ? 'cuota vencida' : 'al día'}
           </span>
         </p>
       </div>

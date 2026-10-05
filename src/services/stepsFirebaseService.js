@@ -1,4 +1,4 @@
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Colección unificada: users/{uid}/stepsHistory/{YYYY-MM-DD} → { date, steps }
@@ -14,7 +14,8 @@ export async function saveStepsToFirebase(uid, date, steps) {
     // acreditaron por esos pasos (xpOtorgado, ver stepRewardsService). Pisarlo
     // entero borraba ese registro y habilitaba a acreditarlos de nuevo.
     if (steps >= prevSteps) {
-      await setDoc(ref, { date, steps }, { merge: true });
+      // actualizadoEn: el entrenador ve "actualizado hace X min".
+      await setDoc(ref, { date, steps, actualizadoEn: serverTimestamp() }, { merge: true });
     }
   } catch {}
 }

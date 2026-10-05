@@ -11,7 +11,7 @@ import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
 import useAuth from '../hooks/useAuth';
 import useGymCheckins from '../hooks/useGymCheckins';
-import { addCheckin, removeCheckin, getTodayHistory, getSociosQuotaStatus, getCheckinAnalytics, getAllSocios, updateSocio, addSocio, deleteSocio } from '../services/gymService';
+import { addCheckin, removeCheckin, getTodayHistory, getSociosQuotaStatus, analiticaGuardada, actualizarAnalitica, getAllSocios, updateSocio, addSocio, deleteSocio } from '../services/gymService';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 const PEAK_HOURS   = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22];
@@ -598,16 +598,21 @@ export default function GymScreen({ navigation }) {
   const openAnalytics = useCallback(async (days = 7) => {
     setAnalyticsRange(days);
     setAnalyticsVisible(true);
-    setAnalyticsLoading(true);
+    // Lo guardado se muestra al instante; si no hay nada, se espera la carga.
+    const guardado = await analiticaGuardada(days);
+    if (guardado) setAnalyticsData(guardado);
+    else setAnalyticsLoading(true);
     try {
-      const data = await getCheckinAnalytics(days);
-      setAnalyticsData(data);
+      setAnalyticsData(await actualizarAnalitica(days));
     } catch {
-      Alert.alert('Error', 'No se pudo cargar el análisis.');
+      if (!guardado) Alert.alert('Error', 'No se pudo cargar el análisis.');
     } finally {
       setAnalyticsLoading(false);
     }
   }, []);
+
+  // Se precarga de fondo al entrar, así al tocar Análisis ya está listo.
+  useEffect(() => { actualizarAnalitica(7).catch(() => {}); }, []);
 
   const loadQuotaData = useCallback(async ({ isRefresh = false } = {}) => {
     if (isRefresh) setQuotaRefreshing(true);

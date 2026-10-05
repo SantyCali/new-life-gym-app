@@ -5,6 +5,19 @@ const { NLGStepCounter } = NativeModules;
 export const nativeServiceAvailable =
   Platform.OS === 'android' && !!NLGStepCounter;
 
+// Le pasa la sesión al servicio de pasos para que suba los pasos a Firebase
+// por su cuenta (modules/PasosEnLaNube.kt). Las versiones viejas del módulo
+// nativo no tienen estos métodos: ahí no hace nada.
+export async function darSesionAlServicio(uid, refreshToken, apiKey, projectId) {
+  if (!nativeServiceAvailable || !NLGStepCounter.setSyncCredentials || !uid || !refreshToken) return;
+  try { await NLGStepCounter.setSyncCredentials(uid, refreshToken, apiKey, projectId); } catch {}
+}
+
+export async function sacarSesionAlServicio() {
+  if (!nativeServiceAvailable || !NLGStepCounter.clearSyncCredentials) return;
+  try { await NLGStepCounter.clearSyncCredentials(); } catch {}
+}
+
 export async function startNativeStepService() {
   if (!nativeServiceAvailable) return false;
   try { return await NLGStepCounter.startService(); } catch { return false; }
@@ -61,4 +74,40 @@ export async function getNativeStepHistory() {
 export async function clearPendingHistorySync() {
   if (!nativeServiceAvailable) return;
   try { await NLGStepCounter.clearPendingHistorySync(); } catch {}
+}
+
+// ── Reloj o pulsera (ver modules/RelojSalud.kt) ──────────────────────────────
+// El reloj pasa los pasos a su app (Mi Fitness, Samsung Health, Fitbit…), esa
+// app los escribe en Health Connect, y el servicio de pasos los lee de ahí
+// cada 5 minutos (también con la app cerrada). Las builds anteriores no
+// tienen estos métodos.
+export const relojDisponible =
+  nativeServiceAvailable && typeof NLGStepCounter?.conectarReloj === 'function';
+
+// { hc: 'ok'|'sin_hc'|'actualizar', activa, permiso, fondo, fondoDisponible,
+//   pasosHoy, ultimaLectura, apps: ['Mi Fitness', …] } o null.
+export async function estadoReloj() {
+  if (!relojDisponible) return null;
+  try { return await NLGStepCounter.estadoReloj(); } catch { return null; }
+}
+
+// 'ok' | 'negado' | 'sin_hc' | 'actualizar' | 'error'
+export async function conectarReloj() {
+  if (!relojDisponible) return 'error';
+  try { return await NLGStepCounter.conectarReloj(); } catch { return 'error'; }
+}
+
+export async function desconectarReloj() {
+  if (!relojDisponible) return;
+  try { await NLGStepCounter.desconectarReloj(); } catch {}
+}
+
+export async function leerRelojAhora() {
+  if (!relojDisponible) return;
+  try { await NLGStepCounter.leerRelojAhora(); } catch {}
+}
+
+export async function abrirHealthConnect() {
+  if (!relojDisponible) return false;
+  try { return await NLGStepCounter.abrirHealthConnect(); } catch { return false; }
 }

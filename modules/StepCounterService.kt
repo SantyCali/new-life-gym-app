@@ -17,7 +17,10 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import java.time.LocalDate
 import java.util.Calendar
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
 class StepCounterService : Service(), SensorEventListener {
@@ -48,7 +51,17 @@ class StepCounterService : Service(), SensorEventListener {
         // dos medianoches sin que nadie lo subiera (celular apagado, sistema que
         // no dejó correr la tarea): con el historial no se pierde ningún día.
         const val KEY_DAILY_HISTORY = "dailyHistory"
-        const val HISTORY_MAX_DAYS  = 14
+        const val HISTORY_MAX_DAYS  = 30
+        // Reloj o pulsera (ver RelojSalud): si está conectado, y los pasos que
+        // pasó hoy (con su fecha, para no arrastrarlos al día siguiente).
+        const val KEY_RELOJ_ACTIVO  = "relojActivo"
+        const val KEY_RELOJ_FECHA   = "relojFecha"
+        const val KEY_RELOJ_PASOS   = "relojPasos"
+        const val KEY_RELOJ_LECTURA = "relojUltLectura"   // última lectura que funcionó (ms)
+        const val KEY_RELOJ_HIST    = "relojUltHistorial" // último repaso de días anteriores (ms)
+        const val ACTION_LEER_RELOJ = "NLG_LEER_RELOJ"
+        private const val RELOJ_CADA_MS      = 5 * 60_000L
+        private const val RELOJ_HIST_CADA_MS = 60 * 60_000L
         const val ACTION_UPDATE_NOTIF     = "NLG_UPDATE_NOTIFICATION"
         // Disparada por el deleteIntent de la notificación cuando el usuario la desliza.
         const val ACTION_NOTIF_DISMISSED  = "NLG_NOTIF_DISMISSED"
@@ -84,6 +97,77 @@ class StepCounterService : Service(), SensorEventListener {
     // Cambia si y solo si hubo un reboot real; se usa para distinguir un reboot genuino
     // de un simple reset de sesión del sensor.
     private var bootTimestamp: Long = 0L
+    // Pasos de hoy según Health Connect / el reloj (0 si no está conectado).
+    private var pasosReloj: Int = 0
+    private val hiloReloj = Executors.newSingleThreadExecutor()
+    private val leyendoReloj = AtomicBoolean(false)
+
+    // Los pasos del día: el mayor entre el sensor del celular y el reloj.
+    // No se suman, porque si la persona lleva las dos cosas son los mismos pasos.
+    private fun pasosVisibles(): Int = maxOf(todaySteps, pasosReloj)
+
+    // Cada 5 minutos lee lo que el reloj pasó a Health Connect. Va aparte
+    // del sensor: si la persona camina sin el celular, el sensor no se mueve.
+    private val lecturaReloj = object : Runnable {
+        override fun run() {
+            leerReloj(forzarHistorial = false)
+            handler.postDelayed(this, RELOJ_CADA_MS)
+        }
+    }
+
+    private fun leerReloj(forzarHistorial: Boolean) {
+        if (!prefs.getBoolean(KEY_RELOJ_ACTIVO, false)) return
+        if (!leyendoReloj.compareAndSet(false, true)) return
+        val ahora = System.currentTimeMillis()
+        val conHistorial = forzarHistorial ||
+            ahora - prefs.getLong(KEY_RELOJ_HIST, 0L) > RELOJ_HIST_CADA_MS
+        hiloReloj.execute {
+            try {
+                val dia = LocalDate.now()
+                val hoy = RelojSalud.pasosDelDia(this, dia)
+                val anteriores = if (conHistorial) RelojSalud.pasosDeDiasAnteriores(this, HISTORY_MAX_DAYS) else null
+                handler.post { aplicarReloj(dia.toString(), hoy, anteriores) }
+            } finally {
+                leyendoReloj.set(false)
+            }
+        }
+    }
+
+    private fun aplicarReloj(fecha: String, hoy: Int?, anteriores: Map<String, Int>?) {
+        val edit = prefs.edit()
+        if (hoy != null) edit.putLong(KEY_RELOJ_LECTURA, System.currentTimeMillis())
+        if (anteriores != null) edit.putLong(KEY_RELOJ_HIST, System.currentTimeMillis())
+        edit.apply()
+
+        if (hoy != null && fecha == lastDate && hoy > pasosReloj) {
+            val antes = pasosVisibles()
+            pasosReloj = hoy
+            saveData()
+            if (pasosVisibles() != antes) {
+                updateNotification(pasosVisibles())
+                PasosEnLaNube.quizasSubir(this, lastDate, pasosVisibles())
+            }
+        }
+
+        // Días anteriores que el reloj pasó tarde: al historial, y la app
+        // (también cerrada) acredita sus puntos.
+        if (!anteriores.isNullOrEmpty()) {
+            val historial = try {
+                JSONObject(prefs.getString(KEY_DAILY_HISTORY, "{}") ?: "{}")
+            } catch (e: Exception) { JSONObject() }
+            var mejoro = false
+            var json = historial.toString()
+            for ((d, n) in anteriores) {
+                if (d == lastDate || n <= historial.optInt(d, 0)) continue
+                json = historyWith(d, n, json)
+                mejoro = true
+            }
+            if (mejoro) {
+                prefs.edit().putString(KEY_DAILY_HISTORY, json).apply()
+                PasosEnLaNube.pedirPuntos(this)
+            }
+        }
+    }
 
     private val sensorWatchdog = object : Runnable {
         override fun run() {
@@ -102,8 +186,43 @@ class StepCounterService : Service(), SensorEventListener {
                     )
                 }
             }
+            // Por si el cambio de día de las 00:00 se atrasó (el sistema
+            // puede demorar los temporizadores con la pantalla apagada).
+            if (lastDate.isNotEmpty() && todayString() != lastDate) cambioDeDia.run()
             handler.postDelayed(this, SENSOR_WATCHDOG_CHECK_MS)
         }
+    }
+
+    // Cambio de día a las 00:00 en punto, aunque no haya pasos. Antes el día
+    // cambiaba recién con el primer paso después de medianoche: si alguien no
+    // se movía hasta las 10, la notificación mostraba los pasos de ayer hasta
+    // esa hora y ahí "se reiniciaba".
+    private val cambioDeDia = object : Runnable {
+        override fun run() {
+            val hoy = todayString()
+            if (lastDate.isNotEmpty() && hoy != lastDate) {
+                stashPendingSync(lastDate, pasosVisibles())
+                todaySteps = 0
+                pasosReloj = 0
+                lastDate   = hoy
+                // lastAccumulated se mantiene: el próximo evento suma solo los
+                // pasos dados desde la medianoche.
+                saveData()
+                updateNotification(pasosVisibles())
+            }
+            programarCambioDeDia()
+        }
+    }
+
+    private fun programarCambioDeDia() {
+        handler.removeCallbacks(cambioDeDia)
+        val c = Calendar.getInstance()
+        c.add(Calendar.DAY_OF_MONTH, 1)
+        c.set(Calendar.HOUR_OF_DAY, 0)
+        c.set(Calendar.MINUTE, 0)
+        c.set(Calendar.SECOND, 5)
+        c.set(Calendar.MILLISECOND, 0)
+        handler.postDelayed(cambioDeDia, (c.timeInMillis - System.currentTimeMillis()).coerceAtLeast(1_000L))
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -156,6 +275,12 @@ class StepCounterService : Service(), SensorEventListener {
             return START_STICKY
         }
 
+        if (intent?.action == ACTION_LEER_RELOJ && lastDate.isNotEmpty()) {
+            // Se acaba de conectar el reloj: leer ya, con los días anteriores.
+            leerReloj(forzarHistorial = true)
+            return START_STICKY
+        }
+
         loadSavedData()
         republishNotification()
 
@@ -165,6 +290,9 @@ class StepCounterService : Service(), SensorEventListener {
 
         handler.removeCallbacks(sensorWatchdog)
         handler.postDelayed(sensorWatchdog, SENSOR_WATCHDOG_CHECK_MS)
+        programarCambioDeDia()
+        handler.removeCallbacks(lecturaReloj)
+        handler.post(lecturaReloj)
 
         return START_STICKY
     }
@@ -181,9 +309,9 @@ class StepCounterService : Service(), SensorEventListener {
                 stopForeground(true)
             }
             if (Build.VERSION.SDK_INT >= 34) {
-                startForeground(NOTIFICATION_ID, buildNotification(todaySteps), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+                startForeground(NOTIFICATION_ID, buildNotification(pasosVisibles()), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
             } else {
-                startForeground(NOTIFICATION_ID, buildNotification(todaySteps))
+                startForeground(NOTIFICATION_ID, buildNotification(pasosVisibles()))
             }
             Log.d(TAG, "republishNotification OK, silent=${prefs.getBoolean(KEY_SILENT, false)}, canal=${if (prefs.getBoolean(KEY_SILENT, false)) CHANNEL_SILENT_ID else CHANNEL_ID}")
         } catch (e: Exception) {
@@ -198,6 +326,7 @@ class StepCounterService : Service(), SensorEventListener {
         handler.removeCallbacksAndMessages(null)
         sensorManager.unregisterListener(this)
         wakeLock?.let { if (it.isHeld) it.release() }
+        hiloReloj.shutdown()
         super.onDestroy()
     }
 
@@ -222,8 +351,9 @@ class StepCounterService : Service(), SensorEventListener {
             today != lastDate -> {
                 // Nuevo día: preservamos el total final del día que termina (ver
                 // stashPendingSync) antes de arrancar el contador de hoy en cero.
-                stashPendingSync(lastDate, todaySteps)
+                stashPendingSync(lastDate, pasosVisibles())
                 todaySteps = 0
+                pasosReloj = 0
                 lastDate   = today
                 resyncBaseline(accumulated, nowElapsed, currentBoot)
             }
@@ -263,7 +393,10 @@ class StepCounterService : Service(), SensorEventListener {
         }
 
         saveData()
-        updateNotification(todaySteps)
+        updateNotification(pasosVisibles())
+        // Sube los pasos a la nube desde acá (ver PasosEnLaNube): no depende de
+        // que Android deje correr la tarea en segundo plano.
+        PasosEnLaNube.quizasSubir(this, lastDate, pasosVisibles())
     }
 
     private fun resyncBaseline(accumulated: Long, nowElapsed: Long, currentBoot: Long) {
@@ -292,6 +425,7 @@ class StepCounterService : Service(), SensorEventListener {
             lastAccumulated        = prefs.getLong(KEY_LAST_ACC, 0L)
             lastAccumulatedElapsed = prefs.getLong(KEY_LAST_ACC_ELAPSED, 0L)
             bootTimestamp          = prefs.getLong(KEY_BOOT_TIMESTAMP, 0L)
+            pasosReloj            = if (prefs.getString(KEY_RELOJ_FECHA, "") == today) prefs.getInt(KEY_RELOJ_PASOS, 0) else 0
             lastDate                = today
         } else {
             // El servicio estuvo parado (matado por el fabricante, reboot, etc.)
@@ -300,9 +434,11 @@ class StepCounterService : Service(), SensorEventListener {
             // Si no lo preservamos acá, se pisa con el 0 del día nuevo sin que
             // nadie (ni la app ni la tarea en background) haya podido subirlo.
             if (saved.isNotEmpty()) {
-                stashPendingSync(saved, prefs.getInt(KEY_TODAY_STEPS, 0))
+                val deLaPulsera = if (prefs.getString(KEY_RELOJ_FECHA, "") == saved) prefs.getInt(KEY_RELOJ_PASOS, 0) else 0
+                stashPendingSync(saved, maxOf(prefs.getInt(KEY_TODAY_STEPS, 0), deLaPulsera))
             }
             todaySteps             = 0
+            pasosReloj            = 0
             lastAccumulated        = 0L
             lastAccumulatedElapsed = 0L
             bootTimestamp          = 0L
@@ -315,6 +451,8 @@ class StepCounterService : Service(), SensorEventListener {
     // que tenga oportunidad — ver stepCounterModule.getPendingHistorySync().
     private fun stashPendingSync(outgoingDate: String, outgoingSteps: Int) {
         if (outgoingSteps <= 0) return
+        // El total final del día que terminó se sube ya, sin esperar a la app.
+        PasosEnLaNube.quizasSubir(this, outgoingDate, outgoingSteps, forzar = true)
         prefs.edit()
             .putString(KEY_PENDING_SYNC_DATE, outgoingDate)
             .putInt(KEY_PENDING_SYNC_STEPS, outgoingSteps)
@@ -325,9 +463,9 @@ class StepCounterService : Service(), SensorEventListener {
     // Agrega (o mejora) el total de un día al historial y descarta lo más
     // viejo. Las fechas son "YYYY-MM-DD", así que ordenarlas como texto es
     // ordenarlas por fecha.
-    private fun historyWith(date: String, steps: Int): String {
+    private fun historyWith(date: String, steps: Int, base: String? = null): String {
         val history = try {
-            JSONObject(prefs.getString(KEY_DAILY_HISTORY, "{}") ?: "{}")
+            JSONObject(base ?: prefs.getString(KEY_DAILY_HISTORY, "{}") ?: "{}")
         } catch (e: Exception) {
             JSONObject()
         }
@@ -345,6 +483,8 @@ class StepCounterService : Service(), SensorEventListener {
             .putLong(KEY_LAST_ACC_ELAPSED, lastAccumulatedElapsed)
             .putLong(KEY_BOOT_TIMESTAMP, bootTimestamp)
             .putString(KEY_LAST_DATE, lastDate)
+            .putString(KEY_RELOJ_FECHA, lastDate)
+            .putInt(KEY_RELOJ_PASOS, pasosReloj)
             .apply()
     }
 

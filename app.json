@@ -2,7 +2,7 @@
   "expo": {
     "name": "New Life",
     "slug": "new-life-app",
-    "version": "1.0.3",
+    "version": "1.0.5",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "newlife",
@@ -43,7 +43,8 @@
       "permissions": [
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.MODIFY_AUDIO_SETTINGS"
-      ]
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",
@@ -102,7 +103,7 @@
         {
           "NSHealthShareUsageDescription": "New Life lee tus pasos de la app Salud (iPhone y Apple Watch) para sumar puntos, racha y torneos.",
           "NSHealthUpdateUsageDescription": "New Life no escribe datos en Salud: solo lee tus pasos para sumar puntos, racha y torneos.",
-          "background": false
+          "background": true
         }
       ]
     ],

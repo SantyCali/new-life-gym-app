@@ -28,6 +28,19 @@ export function getEstadoCuota(fechaVencimiento, now = Date.now()) {
   return 'aldia';
 }
 
+// ¿Entró con la cuota vencida? El kiosco lo deja anotado al pasar el DNI
+// ('VENCIDO'). En la carga manual nadie lo revisó: se calcula con su fecha de
+// vencimiento contra la hora en que entró, con la misma regla (el día del
+// vencimiento todavía entra al día). Si pagó después, ya no figura vencido.
+export function entroVencido(ingreso, socio) {
+  if (ingreso?.estado === 'VENCIDO') return true;
+  if (ingreso?.estado !== 'manual') return false;
+  const entro = ingreso.fechaHora?.toMillis?.();
+  const venc = socio?.fechaVencimiento?.toMillis?.();
+  if (!entro || venc == null) return false;
+  return venc < entro - GRACIA_MS;
+}
+
 export function getEstadosStats(socios) {
   const stats = { total: socios.length, aldia: 0, proximo: 0, vencido: 0, inactivo: 0 };
   socios.forEach((s) => { stats[s.estado] += 1; });

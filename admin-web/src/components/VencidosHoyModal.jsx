@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ESTADOS } from '../services/estadoCuota';
+import { ESTADOS, entroVencido } from '../services/estadoCuota';
 import Modal from './Modal';
 import Avatar from './Avatar';
 import Badge from './Badge';
@@ -10,7 +10,8 @@ import Icon from './Icon';
 // acceso en ese momento. Muestra además el estado actual, porque puede que
 // ya haya pagado después de entrar.
 export default function VencidosHoyModal({ ingresos, porDni, onClose }) {
-  const vencidos = ingresos.filter((i) => i.estado === 'VENCIDO');
+  // Incluye las cargas manuales de quien tenía la cuota vencida (ver entroVencido).
+  const vencidos = ingresos.filter((i) => entroVencido(i, porDni.get(i.dni)));
 
   return (
     <Modal title={`Entraron con la cuota vencida · ${vencidos.length}`} onClose={onClose} wide>

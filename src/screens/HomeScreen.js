@@ -36,6 +36,8 @@ import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
 import { XP_GYM_VISIT } from '../services/gamificationService';
 import EnSalaCard from '../components/ui/EnSalaCard';
+import AvisoPermisoPasos from '../components/ui/AvisoPermisoPasos';
+import { precargarClientes } from '../services/clientesService';
 import { useGymEvents } from '../context/GymEventsContext';
 
 const DAY_ABBR = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
@@ -49,6 +51,12 @@ export default function HomeScreen({ navigation }) {
   const { theme: { colors, isDark } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, isTrainer } = useAuth();
+  // Entrenadores: "Mis clientes" se precarga de fondo para que abra al toque.
+  useEffect(() => {
+    if (!isTrainer) return;
+    const t = setTimeout(precargarClientes, 1500);
+    return () => clearTimeout(t);
+  }, [isTrainer]);
   const { profile } = useUserProfile();
   const { steps: realSteps, totalCalories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading, goal, setGoal: guardarMeta } = useStepContext();
   const { activeCount: gymCount, ingresosHoy: gymIngresosHoy } = useGymCheckins();
@@ -366,6 +374,9 @@ export default function HomeScreen({ navigation }) {
             <Ionicons name="chevron-forward" size={20} color="#FF3891" />
           </TouchableOpacity>
         )}
+
+        {/* Aviso si en Android falta el permiso de actividad física */}
+        <AvisoPermisoPasos />
 
         {/* ── Anillo de pasos ── */}
         <View style={styles.ringSection}>

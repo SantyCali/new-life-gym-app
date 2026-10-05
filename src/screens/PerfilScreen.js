@@ -317,6 +317,7 @@ export default function PerfilScreen({ navigation }) {
         onAspecto={() => navigation.navigate('Aspecto')}
         onGym={() => navigation.navigate('Gym')}
         onSettings={() => navigation.navigate('Settings')}
+        onActividad={isTester ? () => navigation.navigate('Actividad') : null}
         photoUri={photoUri}
         nombre={nombre}
         apellido={apellido}
@@ -486,9 +487,18 @@ export default function PerfilScreen({ navigation }) {
           </View>
         </View>
 
-        {/* ── Calorías quemadas (deslizable: mismo gesto de días que Home) ── */}
+        {/* ── Calorías quemadas (deslizable o con las flechitas, como el anillo de Inicio) ── */}
+        <View style={styles.calNav}>
+        <TouchableOpacity
+          onPress={() => navigateCalDay(-1)}
+          disabled={dayOffset <= -6}
+          hitSlop={10}
+          style={[styles.calFlecha, { opacity: dayOffset <= -6 ? 0.2 : 0.6 }]}
+        >
+          <Ionicons name="chevron-back" size={22} color={colors.textTertiary} />
+        </TouchableOpacity>
         <GestureDetector gesture={calPanGesture}>
-          <Animated.View style={calCardStyle}>
+          <Animated.View style={[calCardStyle, { flex: 1 }]}>
             <View style={[styles.calCard, isHistoryMode && styles.calCardHistory]}>
               <View style={styles.calLeft}>
                 <Text style={styles.calFireIcon}>🔥</Text>
@@ -517,6 +527,15 @@ export default function PerfilScreen({ navigation }) {
             </View>
           </Animated.View>
         </GestureDetector>
+        <TouchableOpacity
+          onPress={() => navigateCalDay(1)}
+          disabled={dayOffset >= 0}
+          hitSlop={10}
+          style={[styles.calFlecha, { opacity: dayOffset >= 0 ? 0.2 : 0.6 }]}
+        >
+          <Ionicons name="chevron-forward" size={22} color={colors.textTertiary} />
+        </TouchableOpacity>
+        </View>
 
         {/* ── Tabs ── */}
         <View style={styles.tabs}>
@@ -1167,7 +1186,7 @@ function UserStat({ label, value }) {
   );
 }
 
-function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspecto, onGym, onSettings, photoUri, nombre, apellido, initials }) {
+function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspecto, onGym, onSettings, onActividad, photoUri, nombre, apellido, initials }) {
   const { theme: { colors } } = useTheme();
   const drawerStyles = useMemo(() => makeDrawerStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -1281,6 +1300,24 @@ function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspect
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.primary} />
         </TouchableOpacity>
+
+        {/* Actividad — solo testers */}
+        {onActividad && (
+          <TouchableOpacity
+            style={drawerStyles.neonCard}
+            onPress={() => onClose(onActividad)}
+            activeOpacity={0.75}
+          >
+            <View style={drawerStyles.neonCardIcon}>
+              <Ionicons name="pulse-outline" size={18} color={colors.primary} />
+            </View>
+            <View style={drawerStyles.neonCardBody}>
+              <Text style={drawerStyles.neonCardTitle}>Actividad</Text>
+              <Text style={drawerStyles.neonCardSub}>Quién usa la app · En vivo</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+          </TouchableOpacity>
+        )}
 
         {/* Configuración — neon card */}
         <TouchableOpacity
@@ -1616,6 +1653,8 @@ function makeStyles(colors) { return StyleSheet.create({
   },
 
   // Calorías
+  calNav: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  calFlecha: { paddingVertical: 12, paddingHorizontal: 2 },
   calCard: {
     flexDirection: 'row',
     backgroundColor: colors.surfaceElevated,

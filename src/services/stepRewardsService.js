@@ -102,6 +102,7 @@ export async function acreditarPasosDelDia(uid, fecha, steps) {
     if (!user.pasosXpDesde) updatesUser.pasosXpDesde = hoy;
 
     const updatesDia = { date: fecha, steps: pasos };
+    if (pasos > (dia.steps ?? 0)) updatesDia.actualizadoEn = serverTimestamp();
     let sumado = 0;
 
     if (fecha >= desde) {

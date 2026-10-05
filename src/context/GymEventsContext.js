@@ -4,7 +4,8 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import useAuth from '../hooks/useAuth';
 import useUserProfile from '../hooks/useUserProfile';
-import { subscribeToUserPresence, advanceRoutineDay, ACTIVE_MS } from '../services/gymService';
+import useActividad from '../hooks/useActividad';
+import { subscribeToUserPresence, advanceRoutineDay, ACTIVE_MS, TOPE_MINUTOS_GYM } from '../services/gymService';
 import { checkGymPresenceInBackground } from '../services/backgroundGymSync';
 import { subscribeToClientRoutine } from '../services/routineService';
 import {
@@ -243,12 +244,21 @@ export function GymEventsProvider({ children }) {
         const presenceEnd = latestGymCheckinMsRef.current
           ? Math.min(Date.now(), latestGymCheckinMsRef.current + ACTIVE_MS)
           : Date.now();
-        const minutes = Math.max(1, Math.round((presenceEnd - gymEntryTimeRef.current) / 60000));
+        // La entrada es la hora REAL del ingreso (cuando pasó el DNI), no
+        // cuándo la app se enteró: si la app se abría tarde, la sesión daba
+        // 1 o 2 minutos aunque hubiera entrenado una hora.
+        const entrada = latestGymCheckinMsRef.current
+          ? Math.min(latestGymCheckinMsRef.current, gymEntryTimeRef.current)
+          : gymEntryTimeRef.current;
+        // Nunca más de 3 horas (ver TOPE_MINUTOS_GYM).
+        const minutes = Math.max(1, Math.min(Math.round((presenceEnd - entrada) / 60000), TOPE_MINUTOS_GYM));
         updateDoc(doc(db, 'users', user.uid), { gymTodayMinutes: minutes }).catch(() => {});
         // Historial diario de gym (mismo patrón que stepsHistory): si el usuario
         // entra y sale varias veces el mismo día, esto refleja la última sesión,
         // igual que gymTodayMinutes — no se acumulan minutos entre sesiones.
-        const d = new Date();
+        // El día es el de la entrada: si la app se entera de la salida recién
+        // al día siguiente, los minutos no van a ese otro día.
+        const d = new Date(entrada);
         const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         setDoc(doc(db, 'users', user.uid, 'gymHistory', today), { date: today, minutes }).catch(() => {});
         gymEntryTimeRef.current = null;
@@ -301,6 +311,9 @@ export function GymEventsProvider({ children }) {
     if (!user?.uid || !hayPerfil) return;
     return suscribirAvisosDeCuota(profile?.gymDni);
   }, [user?.uid, hayPerfil, profile?.gymDni]);
+
+  // Actividad en la app (pantalla Actividad de los testers): en vivo y aperturas.
+  useActividad(user?.uid, profile?.nombre, profile?.apellido);
 
   // Avisos de torneos: "te sumaron a un torneo" y "terminó el torneo".
   useEffect(() => {

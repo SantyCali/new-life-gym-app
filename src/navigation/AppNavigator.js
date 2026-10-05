@@ -22,6 +22,8 @@ import RachaScreen from '../screens/RachaScreen';
 import TorneosScreen from '../screens/TorneosScreen';
 import TorneoDetailScreen from '../screens/TorneoDetailScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import RelojScreen from '../screens/RelojScreen';
+import ActividadScreen from '../screens/ActividadScreen';
 import useAuth from '../hooks/useAuth';
 import { useTheme } from '../context/ThemeContext';
 import SplashLoader from '../components/ui/SplashLoader';
@@ -104,7 +106,7 @@ export default function AppNavigator() {
       }}
     >
     <GymEventsProvider>
-      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade', freezeOnBlur: true, contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }}>
+      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }}>
         {isAuthenticated ? (
           <>
             <Stack.Screen name="Main" component={TabNavigator} />
@@ -156,10 +158,15 @@ export default function AppNavigator() {
             <Stack.Screen
               name="Racha"
               component={RachaScreen}
-              options={{ presentation: 'transparentModal', animation: 'none', cardStyle: { backgroundColor: 'transparent' } }}
+              // Transparente en las dos navegaciones (cardStyle: Android;
+              // contentStyle: iPhone). En iPhone quedaba el fondo de la app
+              // (blanco) y al cerrar la hoja se veía 1 s en blanco en vez del Home.
+              options={{ presentation: 'transparentModal', animation: 'none', cardStyle: { backgroundColor: 'transparent' }, contentStyle: { backgroundColor: 'transparent' } }}
             />
             <Stack.Screen name="Torneos" component={TorneosScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }} />
             <Stack.Screen name="TorneoDetail" component={TorneoDetailScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }} />
+            <Stack.Screen name="Actividad" component={ActividadScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="Reloj" component={RelojScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }} />
             <Stack.Screen name="Settings" component={SettingsScreen} options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }} />
           </>
         ) : (

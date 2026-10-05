@@ -24,12 +24,18 @@ import {
   subscribeTorneo,
   fetchParticipantStats,
   addParticipant,
+  eliminarParticipante,
   finalizarTorneo,
   eliminarTorneo,
   searchUsers,
+  busquedaCompleta,
   tiempoRestante,
   torneoTerminado,
+  torneoCerrado,
   puntosEnTorneo,
+  puntosDeFila,
+  congelarResultado,
+  salirDelTorneo,
   PRIZES,
 } from '../services/torneoService';
 
@@ -45,6 +51,7 @@ function avatarColor(uid) {
   for (let i = 0; i < uid.length; i++) hash = uid.charCodeAt(i) + ((hash << 5) - hash);
   return palette[Math.abs(hash) % palette.length];
 }
+
 
 export default function TorneoDetailScreen({ route, navigation }) {
   const { torneoId, nombre } = route.params;
@@ -85,6 +92,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
   const isActivo  = torneo?.activo !== false;
   // Pasó la fecha de fin o se finalizó: la tabla queda congelada.
   const terminado = torneoTerminado(torneo);
+  const cerrado = torneoCerrado(torneo);
 
   const refreshStats = useCallback(async () => {
     const parts = participantesRef.current;
@@ -111,32 +119,46 @@ export default function TorneoDetailScreen({ route, navigation }) {
     return participantes
       .map(p => {
         const current = stats[p.uid] ?? {};
-        const { xpGanado, gymGanado } = puntosEnTorneo(p, current, terminado);
+        const { xpGanado, gymGanado } = puntosDeFila(torneo, p, current, terminado);
         const nivel     = current.nivelJuego ?? 1;
-        return { ...p, xpGanado, gymGanado, nivel, actual: current };
+        // Foto actual del perfil (la de la fila es la de cuando lo sumaron).
+        return { ...p, photoBase64: current.photoBase64 ?? p.photoBase64, xpGanado, gymGanado, nivel, actual: current };
       })
       .sort((a, b) => b.xpGanado - a.xpGanado);
-  }, [participantes, stats, terminado]);
+  }, [participantes, stats, terminado, torneo]);
+
+  // Torneo ya cerrado sin tabla congelada (de antes de este cambio): se
+  // congela con los números de ahora, así deja de subir.
+  const congeladoRef = useRef(false);
+  useEffect(() => {
+    if (!torneo || torneo.activo !== false || torneo.resultado || congeladoRef.current) return;
+    if (!participantes.length || loadingStats) return;
+    if (statsDe !== participantes.map(p => p.uid).sort().join(',')) return;
+    congeladoRef.current = true;
+    congelarResultado(torneoId, leaderboard).catch(() => { congeladoRef.current = false; });
+  }, [torneo, participantes, loadingStats, statsDe, leaderboard, torneoId]);
 
   // Venció y nadie lo finalizó: se cierra (y se premia) al abrirlo, con la
   // tabla congelada en la fecha de fin. Espera a tener los puntos de todos.
   const cierreAutoRef = useRef(false);
   useEffect(() => {
-    if (!torneo || torneo.activo === false || !terminado || cierreAutoRef.current) return;
+    if (!torneo || torneo.activo === false || !cerrado || cierreAutoRef.current) return;
     if (!participantes.length || loadingStats) return;
     if (statsDe !== participantes.map(p => p.uid).sort().join(',')) return;
     cierreAutoRef.current = true;
     finalizarTorneo(torneoId, leaderboard)
       .then(cerro => { if (cerro && leaderboard.length >= 2) setResultModal(true); })
       .catch(() => { cierreAutoRef.current = false; });
-  }, [torneo, terminado, participantes, loadingStats, statsDe, leaderboard, torneoId]);
+  }, [torneo, cerrado, participantes, loadingStats, statsDe, leaderboard, torneoId]);
 
   const existingUids = useMemo(() => new Set(participantes.map(p => p.uid)), [participantes]);
 
   const handleSearch = useCallback((q) => {
     setSearchQuery(q);
     clearTimeout(searchTimerRef.current);
-    if (!q.trim()) { setSearchResults([]); setSearching(false); return; }
+    // Por privacidad no hay sugerencias: se busca recién con el nombre y
+    // apellido completos, o el DNI (ver searchUsers).
+    if (!busquedaCompleta(q)) { setSearchResults([]); setSearching(false); return; }
     setSearching(true);
     const seq = ++searchSeqRef.current;
     searchTimerRef.current = setTimeout(async () => {
@@ -152,7 +174,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
   const handleAdd = useCallback(async (targetUid) => {
     setFeedback(prev => ({ ...prev, [targetUid]: 'loading' }));
     try {
-      const result = await addParticipant(torneoId, targetUid);
+      const result = await addParticipant(torneoId, targetUid, user?.uid);
       setFeedback(prev => ({ ...prev, [targetUid]: result }));
       if (result === 'ok') {
         setSearchResults(prev => prev.filter(u => u.uid !== targetUid));
@@ -160,7 +182,48 @@ export default function TorneoDetailScreen({ route, navigation }) {
     } catch {
       setFeedback(prev => ({ ...prev, [targetUid]: 'error' }));
     }
+  }, [torneoId, user?.uid]);
+
+  // El creador saca a alguien. Al que sacaron no le llega ningún aviso.
+  const handleSacar = useCallback((item) => {
+    const nombre = `${item.nombre ?? ''} ${item.apellido ?? ''}`.trim() || 'este participante';
+    Alert.alert(
+      'Sacar del torneo',
+      `¿Querés sacar a ${nombre} del torneo? No le va a llegar ningún aviso.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Sacar',
+          style: 'destructive',
+          onPress: () => { eliminarParticipante(torneoId, item.id, item.uid).catch(() => {}); },
+        },
+      ]
+    );
   }, [torneoId]);
+
+  // Salir del torneo (cualquiera, también el creador).
+  const handleSalir = useCallback(() => {
+    const mensaje = participantes.length <= 1
+      ? 'Sos el último: si salís, el torneo se elimina. ¿Seguro?'
+      : isCreator
+        ? 'Vas a dejar el torneo y pasa a manos de otro participante. ¿Seguro?'
+        : 'Vas a dejar el torneo y tus puntos dejan de contar acá. ¿Seguro?';
+    Alert.alert('Salir del torneo', mensaje, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Salir',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await salirDelTorneo(torneoId, user?.uid);
+            navigation.goBack();
+          } catch {
+            Alert.alert('Error', 'No se pudo salir del torneo. Probá de nuevo.');
+          }
+        },
+      },
+    ]);
+  }, [torneoId, user?.uid, isCreator, participantes.length, navigation]);
 
   const handleEliminar = useCallback(() => {
     Alert.alert(
@@ -222,9 +285,14 @@ export default function TorneoDetailScreen({ route, navigation }) {
           </View>
         </View>
         <Text style={styles.xpGanado}>+{item.xpGanado} XP</Text>
+        {isCreator && !terminado && item.uid !== user?.uid && (
+          <TouchableOpacity onPress={() => handleSacar(item)} hitSlop={10} style={{ marginLeft: 10 }}>
+            <Ionicons name="close-circle-outline" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
       </View>
     );
-  }, [colors, styles]);
+  }, [colors, styles, isCreator, terminado, user?.uid, handleSacar]);
 
   const renderSearchResult = useCallback(({ item }) => {
     const fb = feedback[item.uid];
@@ -335,12 +403,27 @@ export default function TorneoDetailScreen({ route, navigation }) {
           </TouchableOpacity>
         )}
 
-        {isCreator && (
-          <TouchableOpacity style={styles.eliminarBtn} onPress={handleEliminar} activeOpacity={0.7}>
-            <Ionicons name="trash-outline" size={14} color={colors.textTertiary} />
-            <Text style={[styles.eliminarText, { color: colors.textTertiary }]}>Eliminar torneo</Text>
+        {/* Salir y eliminar, uno al lado del otro (eliminar solo el creador). */}
+        <View style={styles.salirFila}>
+          <TouchableOpacity
+            style={[styles.salirBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+            onPress={handleSalir}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="exit-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.salirText, { color: colors.textSecondary }]}>Salir del torneo</Text>
           </TouchableOpacity>
-        )}
+          {isCreator && (
+            <TouchableOpacity
+              style={[styles.salirBtn, { backgroundColor: '#EF444412', borderColor: '#EF444433' }]}
+              onPress={handleEliminar}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="trash-outline" size={16} color="#EF4444" />
+              <Text style={[styles.salirText, { color: '#EF4444' }]}>Eliminar torneo</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {leaderboard.length === 0 ? (
@@ -415,7 +498,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
               <Ionicons name="search" size={16} color={colors.textTertiary} />
               <TextInput
                 style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Buscar por nombre"
+                placeholder="Nombre y apellido, o DNI"
                 placeholderTextColor={colors.textTertiary}
                 value={searchQuery}
                 onChangeText={handleSearch}
@@ -433,14 +516,17 @@ export default function TorneoDetailScreen({ route, navigation }) {
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={{ paddingHorizontal: spacing.xl }}
               />
-            ) : searchQuery.trim().length > 0 && !searching ? (
+            ) : busquedaCompleta(searchQuery) && !searching ? (
               <View style={styles.noResults}>
                 <Ionicons name="search-outline" size={36} color={colors.textTertiary} />
-                <Text style={[styles.noResultsText, { color: colors.textSecondary }]}>Sin resultados para "{searchQuery}"</Text>
+                <Text style={[styles.noResultsText, { color: colors.textSecondary }]}>No encontramos a nadie con ese nombre o DNI</Text>
+                <Text style={[styles.noResultsText, { color: colors.textTertiary, fontSize: 13, marginTop: 6 }]}>Revisá que esté escrito igual que en su perfil.</Text>
               </View>
-            ) : !searchQuery.trim() ? (
+            ) : !searching ? (
               <View style={styles.noResults}>
-                <Text style={[styles.noResultsText, { color: colors.textTertiary }]}>Escribí un nombre para buscar</Text>
+                <Ionicons name="lock-closed-outline" size={32} color={colors.textTertiary} />
+                <Text style={[styles.noResultsText, { color: colors.textSecondary }]}>Escribí el nombre y apellido completos, o el DNI</Text>
+                <Text style={[styles.noResultsText, { color: colors.textTertiary, fontSize: 13, marginTop: 6 }]}>Para cuidar la privacidad de todos, no mostramos sugerencias.</Text>
               </View>
             ) : null}
           </KeyboardAvoidingView>
@@ -649,6 +735,8 @@ function makeStyles(colors) {
     },
     noResultsText: {
       fontSize: typography.sizes.base,
+      textAlign: 'center',
+      paddingHorizontal: spacing.xl,
     },
 
     finalizadoBadge: {
@@ -692,17 +780,25 @@ function makeStyles(colors) {
       fontSize: typography.sizes.xs,
       color: '#EF444499',
     },
-    eliminarBtn: {
+
+    salirFila: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+    },
+    salirBtn: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: spacing.xs,
-      paddingVertical: spacing.md,
-      marginTop: spacing.sm,
+      gap: 6,
+      paddingVertical: spacing.sm + 2,
+      borderRadius: radius.full,
+      borderWidth: 1,
     },
-    eliminarText: {
+    salirText: {
       fontSize: typography.sizes.sm,
-      fontWeight: typography.weights.medium,
+      fontWeight: typography.weights.semibold,
     },
 
     resultOverlay: {

@@ -11,7 +11,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { getUserPresenceOnce, ACTIVE_MS } from './gymService';
+import { getUserPresenceOnce, ACTIVE_MS, TOPE_MINUTOS_GYM } from './gymService';
 import { checkAndAwardGymReward } from './gamificationService';
 import { leerPrivado } from './perfilPrivadoService';
 
@@ -20,8 +20,7 @@ const sessionKey = (uid) => `gymBgSessionEntryMs_${uid}`;
 // convertir una sesión vieja/huérfana en una entrada de minutos absurda.
 const MAX_SESSION_MS = 4 * 60 * 60 * 1000; // 4 horas
 
-function todayLocalDateString() {
-  const d = new Date();
+function todayLocalDateString(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
@@ -68,17 +67,25 @@ export async function checkGymPresenceInBackground(uid) {
     // minutos si esta tarea recién corre mucho después de que la persona ya
     // se fue. Solo se usa si ese check-in es posterior a la propia entrada
     // guardada (si no, es de una visita anterior y no dice nada de esta).
+    // Sin un check-in posterior, la sesión dura como mucho lo que dura un
+    // ingreso en sala (ACTIVE_MS) desde la entrada: antes se tomaba "ahora",
+    // y si la tarea corría horas después daba 200 o 375 minutos de gym (y
+    // 1500 o 2900 kcal) en un día de 90.
     const presenceEnd = (latestCheckinMs && latestCheckinMs > storedEntryMs)
       ? Math.min(now, latestCheckinMs + ACTIVE_MS)
-      : now;
+      : Math.min(now, storedEntryMs + ACTIVE_MS);
     const minutes = Math.max(1, Math.min(
       Math.round((presenceEnd - storedEntryMs) / 60000),
       MAX_SESSION_MS / 60000,
+      TOPE_MINUTOS_GYM,
     ));
-    const today = todayLocalDateString();
+    // El día es el de la entrada: si la salida se detecta recién al día
+    // siguiente, los minutos no van a ese otro día (el torneo lo contaba
+    // como una visita que no existió).
+    const dia = todayLocalDateString(new Date(storedEntryMs));
 
-    await updateDoc(doc(db, 'users', uid), { gymTodayDate: today, gymTodayMinutes: minutes });
-    await setDoc(doc(db, 'users', uid, 'gymHistory', today), { date: today, minutes });
+    await updateDoc(doc(db, 'users', uid), { gymTodayDate: dia, gymTodayMinutes: minutes });
+    await setDoc(doc(db, 'users', uid, 'gymHistory', dia), { date: dia, minutes });
     await AsyncStorage.removeItem(sessionKey(uid));
   } catch {}
 }

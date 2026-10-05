@@ -6,14 +6,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useTheme } from '../../context/ThemeContext';
 import { typography, spacing, radius } from '../../theme';
 import useAuth from '../../hooks/useAuth';
 import useUserProfile from '../../hooks/useUserProfile';
 import { subscribeToAnnouncement } from '../../services/announcementService';
-import { juntarPerfil, leerPrivadoDeTodos } from '../../services/perfilPrivadoService';
+import { clientesGuardados, cargarClientes } from '../../services/clientesService';
 import AnnouncementEditSheet from '../../components/ui/AnnouncementEditSheet';
 
 export default function MisClientesScreen({ navigation }) {
@@ -29,13 +27,17 @@ export default function MisClientesScreen({ navigation }) {
   const [announcement, setAnnouncement] = useState(null);
   const [annModal, setAnnModal] = useState(false);
 
+  // Lo guardado al instante y se actualiza de fondo (ver clientesService).
   useEffect(() => {
-    Promise.all([getDocs(collection(db, 'users')), leerPrivadoDeTodos().catch(() => ({}))])
-      .then(([snap, privados]) => {
-        setAllClients(snap.docs.map(d => ({ uid: d.id, ...juntarPerfil(d.data(), privados[d.id]) })));
-      })
+    let vivo = true;
+    clientesGuardados().then((guardados) => {
+      if (vivo && guardados?.length) { setAllClients(guardados); setLoading(false); }
+    });
+    cargarClientes()
+      .then((lista) => { if (vivo) setAllClients(lista); })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
   }, []);
 
   useEffect(() => subscribeToAnnouncement(setAnnouncement), []);

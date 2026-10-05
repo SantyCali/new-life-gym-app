@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
 import { useIngresos } from '../context/IngresosContext';
-import { ESTADOS } from '../services/estadoCuota';
+import { ESTADOS, entroVencido } from '../services/estadoCuota';
 import { toast } from 'react-toastify';
 import {
   filtrarEnSala, estadoAforo, agruparPorHora, marcarSalida, deshacerSalida,
@@ -44,7 +44,7 @@ export default function EnSalaPage() {
   const enSala   = filtrarEnSala(ingresos, ahora);
   const aforo    = estadoAforo(enSala.length);
   const adentro  = new Set(enSala.map((i) => i.id));
-  const vencidos = ingresos.filter((i) => i.estado === 'VENCIDO').length;
+  const vencidos = ingresos.filter((i) => entroVencido(i, porDni.get(i.dni))).length;
 
   const porHora = agruparPorHora(ingresos);
   const maxHora = Math.max(...porHora);
@@ -169,7 +169,9 @@ export default function EnSalaPage() {
                         {i.estado === 'VENCIDO'
                           ? <Badge variant="danger">Vencido</Badge>
                           : i.estado === 'manual'
-                            ? <Badge variant="neutral">Carga manual</Badge>
+                            ? (entroVencido(i, socio)
+                              ? <Badge variant="danger">Manual · vencido</Badge>
+                              : <Badge variant="neutral">Carga manual</Badge>)
                             : <Badge variant="success">Al día</Badge>}
                       </td>
                       <td className="px-3 py-2.5 text-right">

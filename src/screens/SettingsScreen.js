@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, Switch, StyleSheet, Alert, Platform, Linking, Modal, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, Switch, StyleSheet, Alert, Platform, Linking, Modal, TextInput, ActivityIndicator, ScrollView } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -111,7 +111,7 @@ export default function SettingsScreen({ navigation }) {
         <View style={{ width: 40 }} />
       </View>
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
         {showStepToggle && !loading && (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>PASOS</Text>
@@ -153,6 +153,44 @@ export default function SettingsScreen({ navigation }) {
                 <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
+
+            {/* Muchos celulares (Xiaomi, Samsung, Motorola…) cortan la app
+                cerrada para ahorrar batería y los pasos dejan de subirse. */}
+            <TouchableOpacity
+              style={[styles.row, { marginTop: 12 }]}
+              onPress={() => Linking.openSettings()}
+              activeOpacity={0.7}
+            >
+              <View style={styles.rowIcon}>
+                <Ionicons name="battery-charging-outline" size={20} color={colors.primary} />
+              </View>
+              <View style={styles.rowBody}>
+                <Text style={styles.rowTitle}>Contar pasos con la app cerrada</Text>
+                <Text style={styles.rowSub}>Tocá y elegí Batería → Sin restricciones</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+            <Text style={styles.hint}>
+              Si tus pasos solo suben cuando abrís la app, tu celular la está frenando para ahorrar batería. En Ajustes de la app entrá a Batería y elegí "Sin restricciones" (en Xiaomi también activá "Inicio automático").
+            </Text>
+          </View>
+        )}
+
+        {/* Reloj o pulsera: sus pasos entran por Health Connect (Android) o
+            Salud (iPhone). Ver RelojScreen. */}
+        {(Platform.OS === 'ios' || nativeServiceAvailable) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>RELOJ</Text>
+            <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('Reloj')} activeOpacity={0.7}>
+              <View style={styles.rowIcon}>
+                <Ionicons name="watch-outline" size={20} color={colors.primary} />
+              </View>
+              <View style={styles.rowBody}>
+                <Text style={styles.rowTitle}>Conectar reloj o pulsera</Text>
+                <Text style={styles.rowSub}>Mi Band, Galaxy Watch, Fitbit, Amazfit y más</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -172,7 +210,7 @@ export default function SettingsScreen({ navigation }) {
             </View>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
 
       <Modal
         visible={deleteModalVisible}
@@ -250,8 +288,8 @@ function makeStyles(colors) {
       color: colors.text,
     },
     content: {
-      flex:    1,
-      padding: spacing.lg,
+      flexGrow: 1,
+      padding:  spacing.lg,
     },
     section: {
       marginBottom: spacing.xl,

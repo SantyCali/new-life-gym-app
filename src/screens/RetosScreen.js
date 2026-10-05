@@ -34,6 +34,7 @@ import useAuth from '../hooks/useAuth';
 import { estadoLogro, completarLogro } from '../services/logrosService';
 import { useGymEvents } from '../context/GymEventsContext';
 import { LOGROS_DEF } from '../constants/logros';
+import ComoSumarPuntos from '../components/ui/ComoSumarPuntos';
 
 const { width } = Dimensions.get('window');
 
@@ -82,8 +83,23 @@ export default function RetosScreen({ navigation }) {
     : dia === -1 ? 'Ayer'
     : fechaDia.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '');
 
-  const maxSteps = stepMilestones[stepMilestones.length - 1].steps;
-  const progressPercent = Math.min((pasosDia / maxSteps) * 100, 100);
+  // Dónde va cada hito en la barra (%): los tres primeros cerca entre sí y
+  // el de 25K lejos, cada uno con su lugar (con la escala lineal 2K, 5K y
+  // 7.4K quedaban amontonados y lejos de sus números). El relleno avanza por
+  // tramos entre un hito y el siguiente, así pasa justo por cada circulito, y
+  // cada número va centrado debajo del suyo.
+  const POS_HITOS = [14, 27, 45, 100];
+  const posHito = (i) => POS_HITOS[i] ?? ((i + 1) / stepMilestones.length) * 100;
+  const progressPercent = (() => {
+    let desde = 0;
+    for (let i = 0; i < stepMilestones.length; i++) {
+      const hasta = stepMilestones[i].steps;
+      const inicio = i === 0 ? 0 : posHito(i - 1);
+      if (pasosDia < hasta) return inicio + (Math.max(pasosDia - desde, 0) / (hasta - desde)) * (posHito(i) - inicio);
+      desde = hasta;
+    }
+    return 100;
+  })();
   const nextMilestone = stepMilestones.find((m) => m.steps > pasosDia);
   const hitosLogrados = stepMilestones.filter((m) => pasosDia >= m.steps).length;
 
@@ -151,6 +167,8 @@ export default function RetosScreen({ navigation }) {
         {/* ── Header ── */}
         <View style={styles.header}>
           <Text style={styles.logo}>New Life</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <ComoSumarPuntos />
           <TouchableOpacity
             style={styles.rachaBtn}
             onPress={() => navigation.navigate('Inicio')}
@@ -158,6 +176,7 @@ export default function RetosScreen({ navigation }) {
             <Ionicons name="flame" size={14} color={colors.streak} />
             <Text style={styles.rachaBtnText}>Ir a Racha</Text>
           </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Torneos ── */}
@@ -211,8 +230,8 @@ export default function RetosScreen({ navigation }) {
             <View style={styles.milestoneBar}>
               <View style={styles.milestoneTrack} />
               <Animated.View style={[styles.milestoneFill, llenoStyle]} />
-              {stepMilestones.map((m) => {
-                const pos = Math.min((m.steps / maxSteps) * 100, 100);
+              {stepMilestones.map((m, i) => {
+                const pos = posHito(i);
                 const reached = pasosDia >= m.steps;
                 const isCurrent =
                   pasosDia >= m.steps &&
@@ -236,11 +255,12 @@ export default function RetosScreen({ navigation }) {
               })}
             </View>
             <View style={styles.milestoneLabels}>
-              {stepMilestones.map((m) => (
+              {stepMilestones.map((m, i) => (
                 <Text
                   key={m.steps}
                   style={[
                     styles.milestoneLabel,
+                    { left: `${posHito(i)}%` },
                     pasosDia >= m.steps && styles.milestoneLabelReached,
                   ]}
                 >
@@ -570,11 +590,16 @@ function makeStyles(colors) { return StyleSheet.create({
     color: colors.textInverse,
     fontWeight: typography.weights.black,
   },
+  // Cada número centrado debajo de su hito (mismo margen que la barra).
   milestoneLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    height: 16,
+    marginHorizontal: spacing.sm,
   },
   milestoneLabel: {
+    position: 'absolute',
+    width: 44,
+    marginLeft: -22,
+    textAlign: 'center',
     fontSize: typography.sizes.xs,
     color: colors.textTertiary,
     fontWeight: typography.weights.medium,

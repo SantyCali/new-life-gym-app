@@ -62,6 +62,7 @@ export function computeAge(fechaNacimiento) {
 // el mayor de los dos. En Expo Go el módulo no existe: solo sensor.
 
 const PASOS_SALUD = 'HKQuantityTypeIdentifierStepCount';
+const SALUD_PEDIDO = 'saludPermisoPedido'; // se pidió el permiso de Salud alguna vez
 let saludMod;
 function salud() {
   if (saludMod !== undefined) return saludMod;
@@ -76,16 +77,38 @@ function salud() {
 
 // Pide permiso para leer los pasos de Salud (el cartel de iOS sale una sola
 // vez; después no hace nada). Solo desde la app abierta, nunca en segundo plano.
+// Después deja registrado en iOS que despierte la app cuando haya pasos nuevos
+// (background delivery): Apple lo hace como mucho una vez por hora para pasos.
 export async function pedirPermisoSalud() {
   const hk = salud();
   if (!hk) return false;
-  try { return await hk.requestAuthorization({ toRead: [PASOS_SALUD] }); } catch { return false; }
+  try {
+    const ok = await hk.requestAuthorization({ toRead: [PASOS_SALUD] });
+    await AsyncStorage.setItem(SALUD_PEDIDO, '1').catch(() => {});
+    hk.configureBackgroundTypes([PASOS_SALUD], 2 /* UpdateFrequency.hourly */).catch(() => {});
+    return ok;
+  } catch { return false; }
+}
+
+// Al arrancar la app (también cuando iOS la despierta en segundo plano por
+// pasos nuevos en Salud): escucha esos avisos y corre la sincronización.
+// Solo si el permiso ya se pidió alguna vez: consultar Salud sin haberlo pedido
+// cierra la app.
+export async function escucharSaludEnSegundoPlano(alAvisar) {
+  const hk = salud();
+  if (!hk) return;
+  try {
+    if ((await AsyncStorage.getItem(SALUD_PEDIDO)) !== '1') return;
+    hk.subscribeToChanges(PASOS_SALUD, () => { alAvisar(); });
+  } catch {}
 }
 
 // Pasos de Salud entre dos fechas, o null si no se pudo leer.
 async function pasosDeSalud(desde, hasta) {
   const hk = salud();
   if (!hk) return null;
+  // Sin el permiso pedido, consultar Salud cierra la app (aviso de la librería).
+  try { if ((await AsyncStorage.getItem(SALUD_PEDIDO)) !== '1') return null; } catch { return null; }
   try {
     const r = await hk.queryStatisticsForQuantity(PASOS_SALUD, ['cumulativeSum'], {
       filter: { date: { startDate: desde, endDate: hasta } },
@@ -93,6 +116,36 @@ async function pasosDeSalud(desde, hasta) {
     });
     const n = r?.sumQuantity?.quantity;
     return typeof n === 'number' ? Math.round(n) : 0;
+  } catch { return null; }
+}
+
+// Relojes en iPhone: no hace falta leerlos aparte. Su app (Mi Fitness,
+// Garmin Connect, Zepp…) escribe los pasos en Salud, y Salud ya los junta con
+// los del iPhone y el Apple Watch sin contarlos dos veces (lo de arriba).
+// Esto solo sirve para la pantalla "Reloj": ver de qué apps está recibiendo
+// pasos Salud en la última semana, sin contar el propio iPhone.
+// { apps: ['Apple Watch de Ana', 'Mi Fitness'] } o null si no se pudo leer
+// (sin permiso de Salud, Expo Go).
+export async function relojEnSalud() {
+  const hk = salud();
+  if (!hk) return null;
+  try { if ((await AsyncStorage.getItem(SALUD_PEDIDO)) !== '1') return null; } catch { return null; }
+  const desde = midnightToday();
+  desde.setDate(desde.getDate() - 7);
+  try {
+    const r = await hk.queryStatisticsForQuantitySeparateBySource(PASOS_SALUD, ['cumulativeSum'], {
+      filter: { date: { startDate: desde, endDate: new Date() } },
+      unit: 'count',
+    });
+    const apps = (r ?? [])
+      .filter((x) => (x.sumQuantity?.quantity ?? 0) > 0)
+      .map((x) => x.source ?? {})
+      // El iPhone mismo figura como "com.apple.health…"; el Apple Watch
+      // también, pero con "Watch" en el nombre.
+      .filter((src) => !(String(src.bundleIdentifier ?? '').startsWith('com.apple.health') && !/watch/i.test(src.name ?? '')))
+      .map((src) => src.name || src.bundleIdentifier)
+      .filter(Boolean);
+    return { apps: [...new Set(apps)] };
   } catch { return null; }
 }
 
