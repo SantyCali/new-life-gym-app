@@ -8,11 +8,11 @@ import {
   inputAFecha, fechaAInput, hoySinHora, sumarMeses, sumarDias,
 } from '../utils/fechas';
 import { useSocios } from '../context/SociosContext';
-import { ESTADOS } from '../services/estadoCuota';
+import { ESTADOS, etiquetaEstado } from '../services/estadoCuota';
 import { getAllConvenios, createConvenio } from '../services/conveniosService';
 import { getUserByDni, combinarSocioConApp } from '../services/usersService';
 import {
-  getCatalogoPlanes, getPlanesDeSocio, asignarPlan, eliminarPlanAsignado,
+  getCatalogoPlanes, catalogoGuardado, getPlanesDeSocio, eliminarPlanAsignado, renovarCuota, planVigenteDe,
 } from '../services/planesService';
 import {
   subscribeAsistenciasDeSocio, registrarAsistencia, calcularPasesRestantes,
@@ -27,6 +27,7 @@ import PhotoLightbox from '../components/PhotoLightbox';
 import Icon from '../components/Icon';
 import { Skeleton } from '../components/Skeleton';
 import { Field, formatDate } from './SociosPage';
+import { rutinaEsNueva, resumenEsNuevo } from '../utils/novedades';
 
 const DOT_ESTADO = {
   aldia:    'bg-accent shadow-glowSoft',
@@ -87,6 +88,8 @@ export default function SocioDetailPage() {
         safe(getPlanesDeSocio(dni), [], 'planes', errores),
         safe(getUserByDni(dni), null, 'cuenta de la app', errores),
       ]);
+      // El catálogo de planes, para que "Renovar cuota" abra sin esperar.
+      getCatalogoPlanes().catch(() => {});
       setConvenios(c);
       setPlanesHistorial(p);
       setCuentaApp(u);
@@ -115,9 +118,9 @@ export default function SocioDetailPage() {
   }
 
   const convenio       = convenios.find((c) => c.id === socio.convenioId);
-  const planVigente    = planesHistorial.find((p) => p.habilitado) ?? planesHistorial[0] ?? null;
+  const planVigente    = planVigenteDe(planesHistorial);
   const pasesRestantes = calcularPasesRestantes(planVigente, asistencias);
-  const estado         = ESTADOS[socio.estado];
+  const estado         = etiquetaEstado(socio);
   const ingresosMes    = contarIngresosDelMes(asistencias);
   const ultimoAcceso   = asistencias[0] ?? null;
   // La foto cargada en recepción manda; si no hay, se usa la del perfil de la
@@ -203,12 +206,6 @@ export default function SocioDetailPage() {
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-textSecondary">
                 <span className="num">DNI {socio.dni}</span>
-                {planVigente && (
-                  <>
-                    <span className="text-textTertiary/50">·</span>
-                    <span className="font-display font-semibold text-text">{planVigente.nombrePlan}</span>
-                  </>
-                )}
                 {cuentaApp && (
                   <>
                     <span className="text-textTertiary/50">·</span>
@@ -230,6 +227,23 @@ export default function SocioDetailPage() {
             <button onClick={() => setShowRenovar(true)} className="btn-outline">
               <Icon name="event_repeat" className="text-lg" />
               Renovar cuota
+            </button>
+            {/* Armar la rutina (la ve en su app) e imprimirla en la planilla. */}
+            <button
+              onClick={() => navigate(`/socios/${dni}/rutina`)}
+              className="btn-outline relative"
+              title={rutinaEsNueva() ? 'Nuevo: armá la rutina desde acá (la ve en su app) e imprimila en la planilla o bajala en Excel.' : undefined}
+            >
+              <Icon name="fitness_center" className="text-lg" />
+              Rutina
+              {rutinaEsNueva() && (
+                <span className="pointer-events-none absolute -right-2 -top-2.5 flex">
+                  <span className="absolute inline-flex h-full w-full ping-suave rounded-full bg-cyan" />
+                  <span className="relative rounded-full bg-cyan px-1.5 py-0.5 font-display text-[0.625rem] font-extrabold uppercase tracking-caps text-onAccent shadow-lg">
+                    ¡Nuevo!
+                  </span>
+                </span>
+              )}
             </button>
             <MenuAcciones
               socio={socio}
@@ -253,6 +267,13 @@ export default function SocioDetailPage() {
             </div>
 
             <div>
+              {/* El plan, bien visible: es lo primero que se mira en recepción. */}
+              {planVigente && (
+                <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/15 px-3 py-1 font-display text-sm font-extrabold uppercase tracking-wide text-accent shadow-[0_0_14px_rgba(195,244,0,0.18)]">
+                  <Icon name="card_membership" className="text-base" />
+                  {planVigente.nombrePlan}
+                </span>
+              )}
               {planVigente ? (
                 <p className="kpi text-text">
                   ${Number(planVigente.precio).toLocaleString('es-AR')}
@@ -295,7 +316,7 @@ export default function SocioDetailPage() {
                 Renovar cuota
               </button>
               <button onClick={() => setShowPlanes(true)} className="flex items-center gap-1 font-display text-xs font-bold text-cyan transition-colors hover:text-cyanSoft">
-                Gestionar plan
+                Historial de planes
                 <Icon name="arrow_forward" className="text-sm" />
               </button>
             </div>
@@ -359,6 +380,12 @@ export default function SocioDetailPage() {
 
         {/* Columna derecha */}
         <div className="flex flex-col gap-4 lg:col-span-8">
+          <ResumenAsistencias
+            ingresosMes={ingresosMes}
+            meta={planVigente?.diasPorMes ?? 0}
+            vencimiento={socio.fechaVencimiento}
+            ultimoAcceso={ultimoAcceso}
+          />
           <section className="card flex flex-col gap-4 p-5">
             <div className="flex items-center gap-5 border-b border-border">
               <Tab activo={tab === 'asistencias'} onClick={() => setTab('asistencias')}>
@@ -371,22 +398,6 @@ export default function SocioDetailPage() {
 
             {tab === 'asistencias' ? (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surfaceHigh px-3 py-2 text-xs text-textSecondary">
-                  <span className="flex items-center gap-1.5">
-                    <Icon name="trending_up" className="text-base text-accent" />
-                    <strong className="num font-display font-bold text-text">{ingresosMes} ingresos</strong>
-                    registrados este mes
-                  </span>
-                  {ultimoAcceso && (
-                    <span>
-                      Último acceso:{' '}
-                      <strong className="num font-display font-bold text-text">
-                        {formatDateTime(ultimoAcceso.fechaHora)}
-                      </strong>
-                    </span>
-                  )}
-                </div>
-
                 {asistencias.length === 0 ? (
                   <EmptyState
                     icon={<Icon name="sensor_door" className="text-xl" />}
@@ -437,10 +448,10 @@ export default function SocioDetailPage() {
                   <EmptyState
                     icon={<Icon name="card_membership" className="text-xl" />}
                     title="Sin planes asignados"
-                    description="Asigná un plan para fijar la fecha de vencimiento de la cuota."
+                    description="Cargá el plan desde Renovar cuota: ahí se elige el plan y la fecha de vencimiento juntos."
                     action={
-                      <button onClick={() => setShowPlanes(true)} className="btn-primary btn-sm">
-                        Asignar plan
+                      <button onClick={() => setShowRenovar(true)} className="btn-primary btn-sm">
+                        Cargar plan
                       </button>
                     }
                   />
@@ -476,7 +487,7 @@ export default function SocioDetailPage() {
       </div>
 
       {showRenovar && (
-        <RenovarCuotaModal socio={socio} onClose={() => setShowRenovar(false)} />
+        <RenovarCuotaModal socio={socio} planVigente={planVigente} onClose={() => setShowRenovar(false)} onChanged={load} />
       )}
 
       {zoomFoto && (
@@ -504,6 +515,7 @@ export default function SocioDetailPage() {
           historial={planesHistorial}
           onClose={() => setShowPlanes(false)}
           onChanged={load}
+          onRenovar={() => { setShowPlanes(false); setShowRenovar(true); }}
         />
       )}
     </div>
@@ -657,27 +669,78 @@ function formatDateTime(ts) {
 // Renovar = mover la fecha de vencimiento. Los atajos calculan desde el
 // vencimiento actual si todavía no pasó (así no se le "comen" días a quien
 // paga antes) y desde hoy si ya estaba vencido.
-function RenovarCuotaModal({ socio, onClose }) {
+// Renovar la cuota: el plan que se le carga y hasta cuándo, todo junto (ver
+// renovarCuota en planesService). Tocar un plan lo elige y corre la fecha
+// según lo que dura, igual que los atajos; la fecha se puede corregir a mano.
+function RenovarCuotaModal({ socio, planVigente, onClose, onChanged }) {
   const hoy = hoySinHora();
   const actual = socio.fechaVencimiento?.toDate?.() ?? null;
-  const base = actual && actual >= hoy ? actual : hoy;
+  const vigente = !!actual && actual >= hoy;
 
-  const [fecha, setFecha] = useState(fechaAInput(sumarMeses(base, 1)));
+  const visiblesDe = (lista) => lista?.filter((p) => p.habilitado !== false || p.id === planVigente?.planId) ?? null;
+  const inicial = visiblesDe(catalogoGuardado());
+  const planInicial = inicial?.find((p) => p.id === planVigente?.planId) ?? null;
+  const [catalogo, setCatalogo] = useState(inicial);
+  const [planId, setPlanId] = useState(planInicial?.id ?? null);
+  const [desdeVenc, setDesdeVenc] = useState(vigente); // true: desde el vencimiento actual · false: desde hoy
+  // lo último aplicado (plan o atajo); null = fecha a mano
+  const [paso, setPaso] = useState({ tipo: 'meses', n: Number(planInicial?.cantidadMeses) || 1 });
+  const elegidoAMano = useRef(false);
+  const [fecha, setFecha] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const base = desdeVenc && vigente ? new Date(actual) : hoy;
+  const aplicar = (p, b = base) => (p.tipo === 'dias' ? sumarDias(b, p.n) : sumarMeses(b, p.n));
+
+  // Catálogo: los planes habilitados (y el actual aunque se haya deshabilitado).
+  useEffect(() => {
+    // Se refresca de fondo; si el usuario ya eligió algo, no se lo cambia.
+    getCatalogoPlanes().then((lista) => {
+      const visibles = visiblesDe(lista);
+      setCatalogo(visibles);
+      if (elegidoAMano.current) return;
+      const actualEnCatalogo = visibles.find((p) => p.id === planVigente?.planId);
+      if (actualEnCatalogo) {
+        setPlanId(actualEnCatalogo.id);
+        setPaso({ tipo: 'meses', n: Number(actualEnCatalogo.cantidadMeses) || 1 });
+      }
+    }).catch(() => setCatalogo((c) => c ?? []));
+  }, [planVigente?.planId]);
+
+  // La fecha sigue a lo último que se tocó (plan o atajo) y a "desde cuándo".
+  useEffect(() => {
+    if (paso) setFecha(fechaAInput(aplicar(paso)));
+  }, [paso, desdeVenc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const plan = catalogo?.find((p) => p.id === planId) ?? null;
+
+  function elegirPlan(p) {
+    elegidoAMano.current = true;
+    if (planId === p.id) { setPlanId(null); return; } // tocarlo de nuevo: solo fecha
+    setPlanId(p.id);
+    setPaso({ tipo: 'meses', n: Number(p.cantidadMeses) || 1 });
+  }
+
   const atajos = [
-    { label: '+1 mes',   valor: sumarMeses(base, 1) },
-    { label: '+15 días', valor: sumarDias(base, 15) },
-    { label: '+3 meses', valor: sumarMeses(base, 3) },
+    { label: '+1 mes', paso: { tipo: 'meses', n: 1 } },
+    { label: '+15 días', paso: { tipo: 'dias', n: 15 } },
+    { label: '+3 meses', paso: { tipo: 'meses', n: 3 } },
   ];
+  const mismoPaso = (a) => paso && a.tipo === paso.tipo && a.n === paso.n;
+
+  const hasta = inputAAFechaSegura(fecha);
+  const desdeTxt = base.toLocaleDateString('es-AR');
+  const hastaTxt = hasta ? hasta.toLocaleDateString('es-AR') : '—';
 
   async function handleGuardar() {
-    const nueva = inputAFecha(fecha);
-    if (!nueva) return;
+    if (!hasta) return;
     setSaving(true);
     try {
-      const { excel } = await setFechaVencimiento(socio.dni, nueva);
-      avisarGuardado(`Cuota renovada hasta el ${nueva.toLocaleDateString('es-AR')}`, excel);
+      const { excel } = await renovarCuota(socio.dni, { plan, desde: base, hasta });
+      avisarGuardado(plan
+        ? `${plan.nombre} cargado hasta el ${hastaTxt}`
+        : `Cuota renovada hasta el ${hastaTxt}`, excel);
+      await onChanged?.();
       onClose();
     } catch (error) {
       avisarError('No se pudo renovar la cuota', error);
@@ -686,34 +749,103 @@ function RenovarCuotaModal({ socio, onClose }) {
   }
 
   return (
-    <Modal title={`Renovar cuota · ${socio.nombre}`} onClose={onClose}>
+    <Modal title={`Renovar cuota · ${socio.nombre}`} onClose={onClose} wide>
       <div className="space-y-5">
-        <div className="flex items-center justify-between rounded-lg bg-surfaceLowest p-3 text-sm">
-          <span className="text-textSecondary">Vence actualmente</span>
-          <span className="num font-display font-bold text-text">
-            {actual ? actual.toLocaleDateString('es-AR') : 'Sin fecha'}
-          </span>
+        <div className="grid grid-cols-1 gap-2 rounded-lg bg-surfaceLowest p-3 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between gap-2 sm:block">
+            <span className="block text-textSecondary">Plan actual</span>
+            <span className="font-display font-bold text-text">
+              {planVigente ? `${planVigente.nombrePlan} · $${Number(planVigente.precio).toLocaleString('es-AR')}` : 'Sin plan'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2 sm:block">
+            <span className="block text-textSecondary">Vence actualmente</span>
+            <span className={`num font-display font-bold ${vigente ? 'text-text' : 'text-danger'}`}>
+              {actual ? actual.toLocaleDateString('es-AR') : 'Sin fecha'}{actual && !vigente ? ' (vencida)' : ''}
+            </span>
+          </div>
         </div>
 
         <div>
-          <span className="label">Atajos {actual && actual >= hoy ? '(desde el vencimiento actual)' : '(desde hoy)'}</span>
-          <div className="flex flex-wrap gap-2">
-            {atajos.map((a) => (
-              <button
-                key={a.label}
-                type="button"
-                onClick={() => setFecha(fechaAInput(a.valor))}
-                className={`btn-sm btn ${fecha === fechaAInput(a.valor) ? 'bg-accent text-onAccent' : 'bg-surfaceHigh text-text hover:bg-surfaceHighest'}`}
-              >
-                {a.label}
+          <span className="label">Plan que se le carga</span>
+          {catalogo == null ? (
+            <p className="text-sm text-textTertiary">Cargando planes…</p>
+          ) : catalogo.length === 0 ? (
+            <p className="text-sm text-textTertiary">
+              No hay planes en el catálogo. <Link to="/planes" className="text-cyan hover:underline">Crear uno</Link> o renová solo la fecha.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {catalogo.map((p) => {
+                const activo = planId === p.id;
+                const esActual = p.id === planVigente?.planId;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => elegirPlan(p)}
+                    className={`flex flex-col items-start rounded-lg border px-3 py-2 text-left transition-colors ${activo ? 'border-accent bg-accent/15' : 'border-border bg-surfaceHigh hover:bg-surfaceHighest'}`}
+                  >
+                    <span className={`text-sm font-semibold ${activo ? 'text-accent' : 'text-text'}`}>
+                      {p.nombre}{esActual && <span className="ml-1.5 rounded bg-cyan/15 px-1 py-px text-[0.625rem] font-bold uppercase text-cyan">actual</span>}
+                    </span>
+                    <span className="num text-xs text-textSecondary">
+                      ${Number(p.precio).toLocaleString('es-AR')} · {p.cantidadMeses} {Number(p.cantidadMeses) === 1 ? 'mes' : 'meses'}
+                      {p.diasPorMes ? ` · ${p.diasPorMes} pases` : ''}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <span className="label">Desde</span>
+            <div className="flex flex-wrap gap-2">
+              {vigente && (
+                <button type="button" onClick={() => setDesdeVenc(true)} className={`btn-sm btn ${desdeVenc ? 'bg-accent text-onAccent' : 'bg-surfaceHigh text-text hover:bg-surfaceHighest'}`}>
+                  El vencimiento ({actual.toLocaleDateString('es-AR')})
+                </button>
+              )}
+              <button type="button" onClick={() => setDesdeVenc(false)} className={`btn-sm btn ${!desdeVenc || !vigente ? 'bg-accent text-onAccent' : 'bg-surfaceHigh text-text hover:bg-surfaceHighest'}`}>
+                Hoy ({hoy.toLocaleDateString('es-AR')})
               </button>
-            ))}
+            </div>
+            <p className="mt-1 text-[0.6875rem] text-textTertiary">
+              {vigente ? 'Para renovar, desde el vencimiento. Para un cambio de plan en el momento, desde hoy.' : 'La cuota está vencida: corre desde hoy.'}
+            </p>
+          </div>
+          <div>
+            <span className="label">Atajos</span>
+            <div className="flex flex-wrap gap-2">
+              {atajos.map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  onClick={() => setPaso(a.paso)}
+                  className={`btn-sm btn ${mismoPaso(a.paso) ? 'bg-accent text-onAccent' : 'bg-surfaceHigh text-text hover:bg-surfaceHighest'}`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <Field label="Nuevo vencimiento">
-          <input type="date" className="input num" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          <input type="date" className="input num" value={fecha} onChange={(e) => { setPaso(null); setFecha(e.target.value); }} />
         </Field>
+
+        <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 text-sm text-text">
+          {plan
+            ? <>Se carga <strong>{plan.nombre}</strong> · ${Number(plan.precio).toLocaleString('es-AR')} · del <strong className="num">{desdeTxt}</strong> al <strong className="num">{hastaTxt}</strong>.</>
+            : <>Solo se cambia la fecha: vence el <strong className="num">{hastaTxt}</strong> (sin cargar plan).</>}
+          {plan && planVigente && !desdeVenc && vigente && (
+            <span className="mt-1 block text-xs text-textSecondary">El plan actual se corta hoy y pasa a este.</span>
+          )}
+        </div>
 
         <p className="text-xs text-textTertiary">
           Se actualiza en la app, en este panel y en el Excel, que es lo que consulta el control de acceso de la entrada.
@@ -721,7 +853,7 @@ function RenovarCuotaModal({ socio, onClose }) {
 
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn-ghost">Cancelar</button>
-          <button onClick={handleGuardar} disabled={saving || !fecha} className="btn-primary">
+          <button onClick={handleGuardar} disabled={saving || !hasta} className="btn-primary">
             {saving ? 'Guardando...' : 'Renovar'}
           </button>
         </div>
@@ -729,6 +861,8 @@ function RenovarCuotaModal({ socio, onClose }) {
     </Modal>
   );
 }
+
+const inputAAFechaSegura = (v) => { const f = inputAFecha(v); return f && !Number.isNaN(f.getTime()) ? f : null; };
 
 function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConvenioCreated }) {
   // En Firestore y en el Excel el nombre va junto; acá se separa con la misma
@@ -900,106 +1034,61 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
   );
 }
 
-function PlanesModal({ dni, historial, onClose, onChanged }) {
-  const [catalogo, setCatalogo] = useState([]);
-  const [selectedId, setSelectedId] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { getCatalogoPlanes().then(setCatalogo); }, []);
-
-  const selected = catalogo.find((p) => p.id === selectedId);
-
-  async function handleAsignar() {
-    if (!selected) return;
-    setSaving(true);
-    try {
-      const { vencimiento, excel } = await asignarPlan(dni, selected);
-      avisarGuardado(`Plan asignado, vence el ${vencimiento.toLocaleDateString('es-AR')}`, excel);
-      await onChanged();
-      setSelectedId('');
-    } catch (error) {
-      avisarError('No se pudo asignar el plan', error);
-    } finally {
-      setSaving(false);
-    }
-  }
-
+// Historial de planes del socio. El plan ya no se asigna desde acá: se carga
+// en "Renovar cuota", junto con la fecha, para que no se pisen.
+function PlanesModal({ dni, historial, onClose, onChanged, onRenovar }) {
   async function handleEliminar(id) {
-    if (!confirm('¿Quitar este plan del historial del socio?')) return;
+    if (!confirm('¿Quitar este plan del historial del socio? La fecha de vencimiento no cambia.')) return;
     await eliminarPlanAsignado(dni, id);
     await onChanged();
   }
 
   return (
-    <Modal title="Planes del socio" onClose={onClose} wide>
-      <div className="space-y-6">
-        <div>
-          <h3 className="label">Asignar plan del catálogo</h3>
-          {catalogo.length === 0 ? (
-            <p className="text-sm text-textTertiary">
-              No hay planes en el catálogo todavía.{' '}
-              <Link to="/planes" className="text-cyan hover:underline">Crear uno</Link>.
-            </p>
-          ) : (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <select className="input max-w-xs" value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
-                  <option value="">Seleccionar plan...</option>
-                  {catalogo.map((p) => (
-                    <option key={p.id} value={p.id}>{p.nombre}</option>
-                  ))}
-                </select>
-                <button onClick={handleAsignar} disabled={!selected || saving} className="btn-primary">
-                  {saving ? 'Asignando...' : 'Asignar'}
-                </button>
-              </div>
-              {selected && (
-                <p className="num mt-2 text-xs text-textSecondary">
-                  {selected.grupoActividad && `${selected.grupoActividad} · `}
-                  {selected.cantidadMeses} {selected.cantidadMeses === 1 ? 'mes' : 'meses'} ·{' '}
-                  {selected.diasPorMes} días/mes · ${Number(selected.precio).toLocaleString('es-AR')}
-                </p>
-              )}
-            </>
-          )}
+    <Modal title="Historial de planes" onClose={onClose} wide>
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surfaceLowest p-3 text-sm">
+          <span className="text-textSecondary">Para cargar, renovar o cambiar el plan usá <strong className="text-text">Renovar cuota</strong>: ahí elegís el plan y la fecha juntos.</span>
+          <button onClick={onRenovar} className="btn-primary btn-sm">
+            <Icon name="event_repeat" className="text-base" /> Renovar cuota
+          </button>
         </div>
 
-        <div>
-          <h3 className="label">Historial</h3>
-          <div className="max-h-64 overflow-auto rounded-lg border border-border">
-            {historial.length === 0 ? (
-              <EmptyState title="Sin planes cargados" />
-            ) : (
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 bg-surfaceHigh font-display text-[0.6875rem] uppercase tracking-caps text-textSecondary">
-                  <tr>
-                    <th scope="col" className="px-3 py-2 font-bold">Plan</th>
-                    <th scope="col" className="px-3 py-2 font-bold">Inicio</th>
-                    <th scope="col" className="px-3 py-2 font-bold">Vencimiento</th>
-                    <th scope="col" className="px-3 py-2 text-right font-bold">Precio</th>
-                    <th scope="col" className="px-3 py-2" />
+        <div className="max-h-72 overflow-auto rounded-lg border border-border">
+          {historial.length === 0 ? (
+            <EmptyState title="Sin planes cargados" />
+          ) : (
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-surfaceHigh font-display text-[0.6875rem] uppercase tracking-caps text-textSecondary">
+                <tr>
+                  <th scope="col" className="px-3 py-2 font-bold">Plan</th>
+                  <th scope="col" className="px-3 py-2 font-bold">Desde</th>
+                  <th scope="col" className="px-3 py-2 font-bold">Hasta</th>
+                  <th scope="col" className="px-3 py-2 text-right font-bold">Precio</th>
+                  <th scope="col" className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {historial.map((p) => (
+                  <tr key={p.id} className="border-t border-border">
+                    <td className="px-3 py-2 text-text">
+                      {p.nombrePlan}
+                      {p.habilitado === false && <span className="ml-2 text-xs text-textTertiary">(cambiado)</span>}
+                    </td>
+                    <td className="num px-3 py-2 text-textSecondary">{formatDate(p.fechaInicio)}</td>
+                    <td className="num px-3 py-2 text-textSecondary">{formatDate(p.fechaVencimiento)}</td>
+                    <td className="num px-3 py-2 text-right text-textSecondary">
+                      ${Number(p.precio).toLocaleString('es-AR')}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => handleEliminar(p.id)} className="btn-danger btn-sm">
+                        Quitar
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {historial.map((p) => (
-                    <tr key={p.id} className="border-t border-border">
-                      <td className="px-3 py-2 text-text">{p.nombrePlan}</td>
-                      <td className="num px-3 py-2 text-textSecondary">{formatDate(p.fechaInicio)}</td>
-                      <td className="num px-3 py-2 text-textSecondary">{formatDate(p.fechaVencimiento)}</td>
-                      <td className="num px-3 py-2 text-right text-textSecondary">
-                        ${Number(p.precio).toLocaleString('es-AR')}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button onClick={() => handleEliminar(p.id)} className="btn-danger btn-sm">
-                          Quitar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         <div className="flex justify-end">
@@ -1007,5 +1096,114 @@ function PlanesModal({ dni, historial, onClose, onChanged }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+
+
+// ── Resumen de asistencias: tres tarjetas arriba de la lista ────────────────
+function ResumenAsistencias({ ingresosMes, meta, vencimiento, ultimoAcceso }) {
+  const pct = meta > 0 ? Math.min(100, Math.round((ingresosMes / meta) * 100)) : null;
+
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const vence = vencimiento?.toDate?.() ?? null;
+  const dias = vence ? Math.round((new Date(vence).setHours(0, 0, 0, 0) - hoy.getTime()) / 86400000) : null;
+  const venceTxt = vence ? vence.toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }).replace('.', '') : null;
+
+  const acceso = ultimoAcceso?.fechaHora?.toDate?.() ?? null;
+  let accesoDia = null;
+  if (acceso) {
+    const d = new Date(acceso); d.setHours(0, 0, 0, 0);
+    const diff = Math.round((hoy.getTime() - d.getTime()) / 86400000);
+    accesoDia = diff === 0 ? 'Hoy' : diff === 1 ? 'Ayer' : acceso.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' }).replace('.', '');
+  }
+  const accesoHora = acceso ? acceso.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <TarjetaResumen titulo="Asistencias del mes" icono="sync_alt" color="accent">
+        <p className="flex items-baseline gap-1.5">
+          <span className="num font-display text-3xl font-extrabold text-text">{ingresosMes}</span>
+          <span className="text-xs text-textSecondary">{meta > 0 ? `/ ${meta} días meta` : 'este mes'}</span>
+          {pct != null && <span className="num ml-auto font-display text-xs font-bold text-accent">{pct}%</span>}
+        </p>
+        {pct != null && (
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surfaceHighest">
+            <div className="h-full rounded-full bg-accent transition-all duration-500" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+      </TarjetaResumen>
+
+      <TarjetaResumen titulo="Vigencia del pase" icono="event_available" color={dias != null && dias < 0 ? 'danger' : dias === 0 ? 'hoy' : 'cyan'}>
+        {dias == null ? (
+          <p className="font-display text-lg font-bold text-textTertiary">Sin fecha</p>
+        ) : dias === 0 ? (
+          <>
+            <p className="font-display text-3xl font-extrabold text-[#ff9f1a]">Vence hoy</p>
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-textSecondary">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff9f1a]" />
+              Hay que renovar la cuota
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="flex items-baseline gap-1.5">
+              <span className={`num font-display text-3xl font-extrabold ${dias < 0 ? 'text-danger' : 'text-text'}`}>{Math.abs(dias)}</span>
+              <span className="text-xs text-textSecondary">{dias < 0 ? (Math.abs(dias) === 1 ? 'día vencida' : 'días vencida') : dias === 1 ? 'día restante' : 'días restantes'}</span>
+            </p>
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-textSecondary">
+              <span className={`h-1.5 w-1.5 rounded-full ${dias < 0 ? 'bg-danger' : 'bg-cyan'}`} />
+              {dias < 0 ? 'Venció' : 'Vence'} el {venceTxt}
+            </p>
+          </>
+        )}
+      </TarjetaResumen>
+
+      <TarjetaResumen titulo="Último acceso" icono="door_open" color="neutro">
+        {acceso ? (
+          <>
+            <p className="flex items-baseline gap-1.5">
+              <span className="font-display text-2xl font-extrabold text-text">{accesoDia} {accesoHora}</span>
+              <span className="text-xs text-textSecondary">hs</span>
+            </p>
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-textSecondary">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              {ultimoAcceso.estado === 'manual' ? 'Recepción' : 'Control de ingreso'}
+            </p>
+          </>
+        ) : (
+          <p className="font-display text-lg font-bold text-textTertiary">Todavía no vino</p>
+        )}
+      </TarjetaResumen>
+    </div>
+  );
+}
+
+const COLOR_ICONO = {
+  accent: 'bg-accent/15 text-accent',
+  cyan: 'bg-cyan/15 text-cyan',
+  danger: 'bg-danger/15 text-danger',
+  hoy: 'bg-[#ff9f1a]/15 text-[#ff9f1a]',
+  neutro: 'bg-surfaceHighest text-textSecondary',
+};
+
+function TarjetaResumen({ titulo, icono, color, children }) {
+  return (
+    <section className="card relative p-5">
+      {/* "¡Nuevo!" flotando en la esquina, igual que en el botón Rutina. */}
+      {resumenEsNuevo() && (
+        <span className="pointer-events-none absolute -right-2 -top-2.5 z-10 flex">
+          <span className="ping-suave absolute inline-flex h-full w-full rounded-full bg-cyan" />
+          <span className="relative rounded-full bg-cyan px-1.5 py-0.5 font-display text-[0.625rem] font-extrabold uppercase tracking-caps text-onAccent shadow-lg">¡Nuevo!</span>
+        </span>
+      )}
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <span className="font-display text-[0.6875rem] font-bold uppercase tracking-caps text-textSecondary">{titulo}</span>
+        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${COLOR_ICONO[color] ?? COLOR_ICONO.neutro}`}>
+          <Icon name={icono} className="text-xl" />
+        </span>
+      </div>
+      {children}
+    </section>
   );
 }

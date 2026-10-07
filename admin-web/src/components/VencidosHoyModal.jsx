@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ESTADOS, entroVencido } from '../services/estadoCuota';
+import { ESTADOS, entroVencido, etiquetaEstado } from '../services/estadoCuota';
 import Modal from './Modal';
 import Avatar from './Avatar';
 import Badge from './Badge';
@@ -24,7 +24,7 @@ export default function VencidosHoyModal({ ingresos, porDni, onClose }) {
         <div className="flex flex-col gap-2">
           {vencidos.map((i) => {
             const socio = porDni.get(i.dni);
-            const ahora = socio ? ESTADOS[socio.estado] : null;
+            const ahora = socio ? etiquetaEstado(socio) : null;
             const yaPago = socio && (socio.estado === 'aldia' || socio.estado === 'proximo');
             return (
               <div key={i.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surfaceLow p-3">

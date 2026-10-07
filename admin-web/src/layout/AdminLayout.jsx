@@ -8,6 +8,7 @@ import { filtrarEnSala, estadoAforo } from '../services/asistenciasService';
 import Icon from '../components/Icon';
 import LiveDot from '../components/LiveDot';
 import LoadingScreen from '../components/LoadingScreen';
+import { rutinaEsNueva } from '../utils/novedades';
 
 const NAV_GROUPS = [
   {
@@ -17,6 +18,7 @@ const NAV_GROUPS = [
       { to: '/en-sala', label: 'En sala',   icon: 'fitness_center', aforo: true },
       { to: '/socios',  label: 'Socios',    icon: 'group', contador: true },
       { to: '/planes', label: 'Planes',    icon: 'card_membership' },
+      { to: '/rutinas', label: 'Rutinas',  icon: 'sports_gymnastics', nuevo: rutinaEsNueva },
     ],
   },
   {
@@ -91,7 +93,7 @@ export default function AdminLayout() {
                   {group.label}
                 </p>
                 <div className="flex flex-col gap-0.5">
-                  {group.items.map(({ to, label, icon, soon, contador, aforo: conAforo }) => (
+                  {group.items.map(({ to, label, icon, soon, contador, aforo: conAforo, nuevo }) => (
                     <NavLink
                       key={to}
                       to={to}
@@ -123,6 +125,14 @@ export default function AdminLayout() {
                       {contador && totalSocios != null && (
                         <span className="num rounded-full bg-accent px-2 py-0.5 font-display text-[0.6875rem] font-bold text-onAccent">
                           {totalSocios}
+                        </span>
+                      )}
+                      {nuevo?.() && (
+                        <span className="relative flex">
+                          <span className="absolute inline-flex h-full w-full ping-suave rounded-full bg-cyan" />
+                          <span className="relative rounded-full bg-cyan px-1.5 py-0.5 font-display text-[0.625rem] font-extrabold uppercase tracking-caps text-onAccent">
+                            ¡Nuevo!
+                          </span>
                         </span>
                       )}
                       {soon && (

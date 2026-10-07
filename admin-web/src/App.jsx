@@ -12,6 +12,9 @@ import DashboardPage from './pages/DashboardPage';
 import SociosPage from './pages/SociosPage';
 import SocioDetailPage from './pages/SocioDetailPage';
 import PlanesPage from './pages/PlanesPage';
+import RutinaSocioPage from './pages/RutinaSocioPage';
+import RutinasPage from './pages/RutinasPage';
+import RutinaImprimirPage from './pages/RutinaImprimirPage';
 
 export default function App() {
   return (
@@ -19,6 +22,8 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          {/* Hoja para imprimir: sin el menú del panel. */}
+          <Route path="/socios/:dni/rutina/imprimir" element={<ProtectedRoute><RutinaImprimirPage /></ProtectedRoute>} />
 
           <Route
             path="/"
@@ -37,7 +42,9 @@ export default function App() {
             <Route index element={<DashboardPage />} />
             <Route path="socios" element={<SociosPage />} />
             <Route path="socios/:dni" element={<SocioDetailPage />} />
+            <Route path="socios/:dni/rutina" element={<RutinaSocioPage />} />
             <Route path="planes" element={<PlanesPage />} />
+            <Route path="rutinas" element={<RutinasPage />} />
             <Route path="en-sala" element={<EnSalaPage />} />
             <Route path="caja" element={<ComingSoon title="Caja" />} />
             <Route path="reportes" element={<ComingSoon title="Reportes" />} />

@@ -2,6 +2,7 @@ const VARIANTS = {
   success: { chip: 'bg-accent/10 text-accent',   dot: 'bg-accent' },
   warning: { chip: 'bg-cyan/10 text-cyan',       dot: 'bg-cyan' },
   danger:  { chip: 'bg-danger/10 text-danger',   dot: 'bg-danger' },
+  hoy:     { chip: 'bg-[#ff9f1a]/15 text-[#ff9f1a] ring-1 ring-[#ff9f1a]/40', dot: 'bg-[#ff9f1a] animate-pulse' },
   neutral: { chip: 'bg-surfaceHigh text-textSecondary', dot: 'bg-textTertiary' },
 };
 

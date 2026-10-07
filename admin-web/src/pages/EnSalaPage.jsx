@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
 import { useIngresos } from '../context/IngresosContext';
-import { ESTADOS, entroVencido } from '../services/estadoCuota';
+import { ESTADOS, entroVencido, etiquetaEstado } from '../services/estadoCuota';
 import { toast } from 'react-toastify';
 import {
   filtrarEnSala, estadoAforo, agruparPorHora, marcarSalida, deshacerSalida,
@@ -258,7 +258,7 @@ function PersonaEnSala({ ingreso, socio, ahora }) {
   const entro   = ingreso.fechaHora?.toMillis?.() ?? ahora;
   const minutos = Math.max(0, Math.floor((ahora - entro) / 60000));
   const restan  = Math.max(0, VENTANA_MIN - minutos);
-  const estado  = socio ? ESTADOS[socio.estado] : null;
+  const estado  = socio ? etiquetaEstado(socio) : null;
   const [saliendo, setSaliendo] = useState(false);
 
   // Dentro de la tarjeta (que es un link a la ficha): hay que frenar la

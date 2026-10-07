@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
-import { ESTADOS, getEstadosStats } from '../services/estadoCuota';
+import { ESTADOS, getEstadosStats, etiquetaEstado } from '../services/estadoCuota';
 import NuevoSocioModal from '../components/NuevoSocioModal';
 import Badge from '../components/Badge';
 import Avatar from '../components/Avatar';
@@ -143,7 +143,7 @@ export default function SociosPage() {
                   </td>
                   <td className="num px-4 py-2.5 text-textSecondary">{s.dni}</td>
                   <td className="px-4 py-2.5">
-                    <Badge variant={ESTADOS[s.estado].variant}>{ESTADOS[s.estado].label}</Badge>
+                    <Badge variant={etiquetaEstado(s).variant}>{etiquetaEstado(s).label}</Badge>
                   </td>
                   <td className="px-4 py-2.5 text-textSecondary">{s.tieneConvenio ? 'Sí' : '—'}</td>
                   <td className="num px-4 py-2.5 text-right text-textSecondary">{formatDate(s.fechaVencimiento)}</td>

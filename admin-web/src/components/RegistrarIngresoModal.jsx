@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useSocios } from '../context/SociosContext';
 import { useIngresos } from '../context/IngresosContext';
 import { registrarAsistencia, filtrarEnSala } from '../services/asistenciasService';
-import { ESTADOS } from '../services/estadoCuota';
+import { ESTADOS, etiquetaEstado } from '../services/estadoCuota';
 import { avisarError } from '../utils/avisos';
 import Modal from './Modal';
 import Avatar from './Avatar';
@@ -84,7 +84,7 @@ export default function RegistrarIngresoModal({ onClose }) {
 
         <div className="-mr-2 flex max-h-[55vh] flex-col gap-1.5 overflow-y-auto pr-2">
           {resultados.map((s) => {
-            const estado = ESTADOS[s.estado];
+            const estado = etiquetaEstado(s);
             const adentro = enSala.has(s.dni);
             return (
               <button

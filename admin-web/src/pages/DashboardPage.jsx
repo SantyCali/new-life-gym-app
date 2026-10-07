@@ -2,12 +2,13 @@ import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
 import useIngresosDeHoy from '../hooks/useIngresosDeHoy';
-import { getEstadosStats } from '../services/estadoCuota';
+import { getEstadosStats, venceHoy } from '../services/estadoCuota';
 import {
   filtrarEnSala, estadoAforo, agruparPorHora,
 } from '../services/asistenciasService';
 import StatCard from '../components/StatCard';
 import Avatar from '../components/Avatar';
+import Badge from '../components/Badge';
 import EmptyState from '../components/EmptyState';
 import Icon from '../components/Icon';
 import LiveDot from '../components/LiveDot';
@@ -185,9 +186,15 @@ function SocioList({ titulo, subtitulo, icono, variant, socios, cargando, verTod
                     <span className="truncate font-display text-sm font-bold text-text">
                       {s.nombre} {s.apellido}
                     </span>
-                    <span className={`shrink-0 rounded px-1.5 py-0.5 font-display text-[0.6875rem] font-bold uppercase tracking-caps ${a.chip}`}>
-                      {diasRelativos(s.fechaVencimiento)}
-                    </span>
+                    {/* Los que vencen hoy, con el mismo cartel naranja que la
+                        ficha del socio, para que no se pierdan entre el resto. */}
+                    {s.estado === 'proximo' && venceHoy(s.fechaVencimiento) ? (
+                      <span className="shrink-0"><Badge variant="hoy">Vence hoy</Badge></span>
+                    ) : (
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 font-display text-[0.6875rem] font-bold uppercase tracking-caps ${a.chip}`}>
+                        {diasRelativos(s.fechaVencimiento)}
+                      </span>
+                    )}
                   </div>
                   <span className="num truncate text-xs text-textSecondary">
                     DNI {s.dni} · vence {s.fechaVencimiento.toDate().toLocaleDateString('es-AR')}

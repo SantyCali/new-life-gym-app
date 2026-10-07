@@ -1,0 +1,199 @@
+/* Planilla de rutina para imprimir: dos hojas A4 iguales a las de papel del
+   gimnasio. Todo en mm para que salga del mismo tamaño en cualquier impresora. */
+
+.planilla-pantalla {
+  min-height: 100vh;
+  background: #e5e7eb;
+  color: #111;
+  padding: 72px 16px 32px;
+}
+
+.planilla-barra {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #0f131c;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+.hoja {
+  box-sizing: border-box;
+  width: 210mm;
+  height: 297mm;
+  margin: 0 auto 16px;
+  padding: 7mm 8mm;
+  background: #fff;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  font-family: 'Roboto Condensed', 'Arial Narrow', Arial, sans-serif;
+  color: #111;
+  display: flex;
+  flex-direction: column;
+  gap: 3.2mm;
+}
+
+/* Lo que se escribe (datos de la rutina): imprenta, azul tinta. */
+.tinta {
+  color: #1f3a8a;
+  font-weight: 700;
+}
+
+/* ── Cabecera hoja 1 ─────────────────────────────────────────────────────── */
+.cab1 {
+  display: grid;
+  grid-template-columns: 44mm 1fr 76mm;
+  gap: 4mm;
+  align-items: center;
+  height: 47mm;
+}
+.cab1 .sello { width: 44mm; height: 44mm; object-fit: contain; }
+.cab1 .marca {
+  font-family: 'Anton', Impact, sans-serif;
+  font-size: 29pt;
+  line-height: 1;
+  letter-spacing: 0.3pt;
+  margin-bottom: 3mm;
+}
+.cab1 .dir {
+  font-family: Arial, sans-serif;
+  font-size: 12pt;
+  line-height: 1.35;
+  border-bottom: 0.3mm solid #111;
+  width: max-content;
+}
+.cab1 .redes {
+  display: flex;
+  align-items: center;
+  gap: 2mm;
+  margin-top: 2.5mm;
+  font-family: Arial, sans-serif;
+  font-size: 12pt;
+}
+.cab1 .fb {
+  width: 6.5mm;
+  height: 6.5mm;
+  border-radius: 50%;
+  background: #111;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font: 700 11pt Arial, sans-serif;
+}
+.socio {
+  position: relative;
+  height: 46mm;
+  border: 0.45mm solid #111;
+  padding: 2mm 2.5mm;
+  font-family: Arial, sans-serif;
+}
+.socio .campo { width: 49mm; margin-bottom: 1.6mm; }
+.socio .titulo { font-size: 6.5pt; font-weight: 700; }
+.socio .linea {
+  min-height: 4.6mm;
+  border-bottom: 0.25mm solid #111;
+  font-size: 8.5pt;
+  line-height: 4.6mm;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.socio .aviso { position: absolute; left: 2.5mm; bottom: 2mm; width: 50mm; }
+.socio .aviso b { display: block; font-size: 11pt; font-family: 'Anton', Impact, sans-serif; font-weight: 400; letter-spacing: 0.2pt; }
+.socio .aviso span { display: block; font-size: 5.6pt; font-weight: 700; line-height: 1.25; }
+.socio .h { position: absolute; right: 1.5mm; top: 3mm; width: 22mm; }
+
+/* ── Cabecera hoja 2 ─────────────────────────────────────────────────────── */
+.cab2 {
+  display: flex;
+  align-items: center;
+  gap: 3mm;
+  height: 19mm;
+}
+.cab2 .h { height: 17mm; }
+.cab2 .marca {
+  font-family: 'Anton', Impact, sans-serif;
+  font-size: 30pt;
+  line-height: 1;
+}
+.cab2 .notas {
+  margin-left: auto;
+  font-family: Arial, sans-serif;
+  font-size: 6.6pt;
+  line-height: 1.45;
+}
+
+/* ── Secciones ───────────────────────────────────────────────────────────── */
+.seccion {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 0.35mm solid #111;
+}
+.seccion col.c-nom  { width: 25%; }
+.seccion col.c-dia  { width: 7.5%; }
+.seccion col.c-ord  { width: 8%; }
+.seccion col.c-ser  { width: 7.5%; }
+.seccion col.c-rep  { width: 11.5%; }
+.seccion col.c-car  { width: 10%; }
+.seccion col.c-obs  { width: 30.5%; }
+.seccion th {
+  background: #111;
+  color: #fff;
+  height: 6.4mm;
+  padding: 0 2mm;
+  font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
+  font-size: 8.4pt;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+.seccion th:first-child { text-align: left; font-size: 10.5pt; }
+.seccion td {
+  height: 5.55mm;
+  padding: 0 1.8mm;
+  border: 0.22mm solid #111;
+  font-size: 8.6pt;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seccion td:first-child { text-align: left; }
+.seccion td.obs { text-align: left; font-size: 7.6pt; }
+.hoja-2 .seccion td { height: 4.95mm; }
+.observaciones.apretado { font-size: 7pt; }
+.observaciones.apretado p { margin: 0; line-height: 1.15; }
+
+.observaciones {
+  flex: 1;
+  min-height: 26mm;
+  border: 0.45mm solid #111;
+  padding: 2mm 3mm;
+  font-size: 8pt;
+  overflow: hidden;
+}
+.observaciones h3 {
+  margin: 0 0 1.5mm;
+  font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
+  font-size: 12pt;
+  font-weight: 700;
+}
+.observaciones p { margin: 0 0 0.8mm; line-height: 1.3; }
+
+/* ── Impresión: solo las hojas ───────────────────────────────────────────── */
+@page { size: A4 portrait; margin: 0; }
+@media print {
+  html, body { background: #fff !important; }
+  .planilla-pantalla { padding: 0; background: #fff; min-height: 0; }
+  .planilla-barra { display: none !important; }
+  .hoja { margin: 0; box-shadow: none; break-after: page; page-break-after: always; }
+  .hoja:last-child { break-after: auto; page-break-after: auto; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

@@ -19,6 +19,21 @@ export const ESTADOS = {
   inactivo: { label: 'Inactivo',   variant: 'neutral' },
 };
 
+// ¿La cuota vence hoy (mismo día del calendario)?
+export function venceHoy(fechaVencimiento, now = Date.now()) {
+  const v = fechaVencimiento?.toDate?.();
+  return !!v && v.toDateString() === new Date(now).toDateString();
+}
+
+// Etiqueta para mostrar: la del estado, salvo que venza hoy, que se avisa
+// aparte ("Vence hoy", en naranja) para que no se pierda entre los "Por vencer".
+export function etiquetaEstado(socio, now = Date.now()) {
+  if (socio?.estado === 'proximo' && venceHoy(socio.fechaVencimiento, now)) {
+    return { label: 'Vence hoy', variant: 'hoy' };
+  }
+  return ESTADOS[socio?.estado] ?? ESTADOS.aldia;
+}
+
 export function getEstadoCuota(fechaVencimiento, now = Date.now()) {
   const vencMs = fechaVencimiento?.toMillis?.() ?? null;
   if (vencMs === null) return 'aldia';
