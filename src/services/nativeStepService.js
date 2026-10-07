@@ -111,3 +111,22 @@ export async function abrirHealthConnect() {
   if (!relojDisponible) return false;
   try { return await NLGStepCounter.abrirHealthConnect(); } catch { return false; }
 }
+
+// ── Solo los pasos del reloj (build 8 en adelante) ───────────────────────────
+// Con el interruptor prendido, la app cuenta solo lo que pasa el reloj (no el
+// sensor del celular). Las builds anteriores no lo tienen: ahí no se muestra.
+export const soloRelojDisponible =
+  relojDisponible && typeof NLGStepCounter?.setSoloReloj === 'function';
+
+export async function setSoloReloj(solo) {
+  if (!soloRelojDisponible) return;
+  try { await NLGStepCounter.setSoloReloj(!!solo); } catch {}
+}
+
+// ── Registro del contador (ver modules/GuardiaPasos.kt) ──────────────────────
+// { eventos: ['2026-10-07 13:42 arranco (alarma, parado 3 h 10 min)', …],
+//   bateriaSinRestricciones, vivo } o null en builds anteriores.
+export async function getRegistroPasos() {
+  if (!nativeServiceAvailable || typeof NLGStepCounter?.getRegistroPasos !== 'function') return null;
+  try { return await NLGStepCounter.getRegistroPasos(); } catch { return null; }
+}

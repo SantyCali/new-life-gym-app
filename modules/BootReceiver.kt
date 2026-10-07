@@ -3,23 +3,25 @@ package com.newlife.app
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 
-// Reinicia el servicio de pasos automáticamente después de que el dispositivo se reinicia.
-// En Xiaomi/MIUI también escucha QUICKBOOT_POWERON (arranque rápido).
+// Arranca el contador de pasos solo:
+//   - después de que el celular se reinicia (en Xiaomi/MIUI también con
+//     QUICKBOOT_POWERON, el arranque rápido);
+//   - después de que Play Store actualiza la app (la actualización cierra la
+//     app y el contador se iba con ella hasta que alguien la abría).
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
-        if (action == Intent.ACTION_BOOT_COMPLETED ||
-            action == "android.intent.action.QUICKBOOT_POWERON" ||
-            action == "com.htc.intent.action.QUICKBOOT_POWERON"
-        ) {
-            val svc = Intent(context, StepCounterService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(svc)
-            } else {
-                context.startService(svc)
-            }
+        val motivo = when (action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            "android.intent.action.QUICKBOOT_POWERON",
+            "com.htc.intent.action.QUICKBOOT_POWERON" -> "reinicio"
+            Intent.ACTION_MY_PACKAGE_REPLACED -> "actualizacion"
+            else -> return
         }
+        val p = context.getSharedPreferences(StepCounterService.PREFS_NAME, Context.MODE_PRIVATE)
+        if (p.getBoolean(GuardiaPasos.KEY_DETENIDO, false)) return
+        GuardiaPasos.programar(context)
+        GuardiaPasos.arrancar(context, motivo)
     }
 }

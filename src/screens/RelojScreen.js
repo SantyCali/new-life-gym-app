@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, Platform, ScrollView, ActivityIndicator, AppState, Alert, Linking } from 'react-native';
+import { View, Text, StyleSheet, Platform, ScrollView, ActivityIndicator, AppState, Alert, Linking, Switch } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,7 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
 import {
   relojDisponible, estadoReloj, conectarReloj, desconectarReloj,
-  leerRelojAhora, abrirHealthConnect,
+  leerRelojAhora, abrirHealthConnect, soloRelojDisponible, setSoloReloj,
 } from '../services/nativeStepService';
 import { relojEnSalud, pedirPermisoSalud, openHealthConnectInstall } from '../services/stepService';
 
@@ -89,6 +89,17 @@ export default function RelojScreen({ navigation }) {
       setTimeout(refrescar, 3000);
       setOcupado(false);
     }
+  }
+
+  // Interruptor "solo reloj": se ve el cambio al toque y después se confirma
+  // con lo que guardó el contador.
+  const [soloRelojLocal, setSoloRelojLocal] = useState(null);
+  const soloReloj = soloRelojLocal ?? !!estado?.soloReloj;
+  async function cambiarSoloReloj(v) {
+    setSoloRelojLocal(v);
+    await setSoloReloj(v);
+    await refrescar();
+    setSoloRelojLocal(null);
   }
 
   function desconectar() {
@@ -197,6 +208,26 @@ export default function RelojScreen({ navigation }) {
 
         {tarjeta}
 
+        {/* Solo Android con la build nueva y el reloj conectado. */}
+        {!ES_IOS && soloRelojDisponible && conectada && (
+          <View style={[styles.card, styles.interruptor]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.interruptorTitulo}>Contar solo los pasos del reloj</Text>
+              <Text style={styles.interruptorTexto}>
+                {soloReloj
+                  ? 'Los pasos del celular no cuentan. Los que ya se subieron hoy no bajan.'
+                  : 'Apagado: cuenta el que tenga más pasos, el reloj o el celular.'}
+              </Text>
+            </View>
+            <Switch
+              value={soloReloj}
+              onValueChange={cambiarSoloReloj}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+        )}
+
         <Text style={styles.sectionLabel}>CÓMO CONECTARLO</Text>
         <View style={styles.card}>
           {pasos.map((t, i) => (
@@ -292,6 +323,12 @@ function makeStyles(colors) {
     },
     heroTitle: { ...typography.h3, color: colors.text, textAlign: 'center' },
     heroSub: { ...typography.caption, color: colors.textSecondary, textAlign: 'center', lineHeight: 19, marginTop: spacing.xs },
+    interruptor: {
+      flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+      padding: spacing.md, marginBottom: spacing.md,
+    },
+    interruptorTitulo: { fontSize: typography.sizes.base, fontWeight: '700', color: colors.text },
+    interruptorTexto: { fontSize: typography.sizes.sm, color: colors.textSecondary, marginTop: 2, lineHeight: 18 },
     estado: {
       flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start',
       backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,

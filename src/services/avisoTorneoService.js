@@ -20,12 +20,12 @@ const clave = (uid) => `avisoTorneos_${uid}`;
 
 // Puesto del usuario en un torneo terminado, o null si no se puede saber
 // (algún participante sin foto de cierre, con la versión vieja de la app).
-async function puestoEnTorneo(torneoId, uid) {
+async function puestoEnTorneo(torneoId, uid, soloPasos = false) {
   const snap = await getDocs(collection(db, 'torneos', torneoId, 'participantes'));
   const filas = snap.docs.map((d) => d.data());
   if (filas.length < 2 || filas.some((p) => p.xpTorneo == null && p.xpTotalFin == null)) return null;
   const tabla = filas
-    .map((p) => ({ uid: p.uid, ...puntosEnTorneo(p, {}, true) }))
+    .map((p) => ({ uid: p.uid, ...puntosEnTorneo(p, {}, true, soloPasos) }))
     .sort((a, b) => b.xpGanado - a.xpGanado); // mismo orden que la tabla del torneo
   const i = tabla.findIndex((p) => p.uid === uid);
   return i === -1 ? null : { puesto: i + 1, total: tabla.length };
@@ -127,7 +127,7 @@ async function revisar(uid, torneosDados) {
       const quien = t.creadoPorNombre || 'Alguien';
       avisos.push({
         title: '🏆 Te sumaron a un torneo',
-        body: `${quien} te agregó a "${t.nombre}". ¡A sumar pasos y visitas al gym!`,
+        body: `${quien} te agregó a "${t.nombre}". ${t.soloPasos ? '¡A sumar pasos!' : '¡A sumar pasos y visitas al gym!'}`,
         data: { tipo: 'torneo', torneoId: t.id, nombre: t.nombre },
       });
     }
@@ -136,7 +136,7 @@ async function revisar(uid, torneosDados) {
       terminados.add(t.id);
       // Si recién lo conoce y ya estaba terminado, no se avisa el cierre.
       if (nuevo) continue;
-      const r = await puestoEnTorneo(t.id, uid).catch(() => null);
+      const r = await puestoEnTorneo(t.id, uid, !!t.soloPasos).catch(() => null);
       const medalla = r?.puesto === 1 ? '🥇' : r?.puesto === 2 ? '🥈' : r?.puesto === 3 ? '🥉' : '🏁';
       avisos.push({
         title: `${medalla} Terminó el torneo "${t.nombre}"`,

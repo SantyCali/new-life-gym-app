@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator, Image, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
@@ -10,6 +10,10 @@ import { clientesGuardados, cargarClientes } from '../services/clientesService';
 // Solo testers: quién está usando la app ahora (EN VIVO), cuándo fue la
 // última vez de cada uno y cuántas veces la abrió.
 const EN_VIVO_MS = 4.5 * 60 * 1000; // el latido es cada 2 min: margen para atrasos
+
+// Para buscar: sin mayúsculas, tildes ni espacios de más.
+const normalizar = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
 
 function haceCuanto(ms, ahora) {
   if (!ms) return 'nunca';
@@ -29,6 +33,7 @@ export default function ActividadScreen({ navigation }) {
   const [ahora, setAhora] = useState(Date.now());
   const [clientes, setClientes] = useState({});  // uid → perfil completo (la lista de Mis clientes)
   const [filtro, setFiltro] = useState('todos'); // 'vivo' | 'hoy' | 'todos'
+  const [busqueda, setBusqueda] = useState('');
 
   useEffect(() => subscribeActividad(setFilas), []);
   useEffect(() => {
@@ -55,9 +60,19 @@ export default function ActividadScreen({ navigation }) {
 
   const enVivo = lista.filter((f) => f.enVivo).length;
   const activosHoy = lista.filter((f) => f.hoy > 0).length;
-  const visibles = filtro === 'vivo' ? lista.filter((f) => f.enVivo)
+  const porFiltro = filtro === 'vivo' ? lista.filter((f) => f.enVivo)
     : filtro === 'hoy' ? lista.filter((f) => f.hoy > 0)
     : lista;
+  // Búsqueda por nombre o DNI (el DNI sale de la lista de Mis clientes), junto
+  // con el filtro de arriba.
+  const q = normalizar(busqueda);
+  const qDni = q.replace(/[.\s]/g, '');
+  const visibles = !q ? porFiltro : porFiltro.filter((f) => {
+    const c = clientes[f.uid] ?? {};
+    const nombre = normalizar(`${f.nombre ?? c.nombre ?? ''} ${f.apellido ?? c.apellido ?? ''}`);
+    if (q.split(' ').every((p) => nombre.includes(p))) return true;
+    return /^\d+$/.test(qDni) && [c.dni, c.gymDni].some((d) => String(d ?? '').includes(qDni));
+  });
 
   // Tocar a alguien abre su perfil, igual que desde Mis clientes.
   const abrir = async (uid) => {
@@ -93,6 +108,11 @@ export default function ActividadScreen({ navigation }) {
           <Text style={[st.meta, { color: colors.textSecondary }]}>
             {item.aperturas ?? 0} aperturas · hoy {item.hoy} · {item.plataforma === 'ios' ? 'iPhone' : 'Android'}{item.version ? ` · v${item.version}` : ''}
           </Text>
+          {/* Con la batería restringida, Android puede parar el contador de
+              pasos y no dejar que vuelva solo (ver GuardiaPasos.kt). */}
+          {item.contador?.bateriaSinRestricciones === false && (
+            <Text style={[st.meta, { color: '#FF9F1A' }]}>🔋 Batería con restricciones: puede dejar de contar pasos</Text>
+          )}
         </View>
         <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
       </TouchableOpacity>
@@ -134,6 +154,25 @@ export default function ActividadScreen({ navigation }) {
         })}
       </View>
 
+      {/* Buscar por nombre o DNI */}
+      <View style={[st.buscador, { backgroundColor: colors.surfaceContainer, borderColor: colors.border }]}>
+        <Ionicons name="search" size={17} color={colors.textTertiary} />
+        <TextInput
+          style={[st.buscadorInput, { color: colors.text }]}
+          placeholder="Buscar por nombre o DNI"
+          placeholderTextColor={colors.textTertiary}
+          value={busqueda}
+          onChangeText={setBusqueda}
+          autoCorrect={false}
+          returnKeyType="search"
+        />
+        {busqueda.length > 0 && (
+          <TouchableOpacity onPress={() => setBusqueda('')} hitSlop={10}>
+            <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
+      </View>
+
       {filas === null ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
       ) : (
@@ -142,10 +181,13 @@ export default function ActividadScreen({ navigation }) {
           keyExtractor={(f) => f.uid}
           renderItem={renderFila}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40, gap: 10 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           ListEmptyComponent={(
             <Text style={[st.vacio, { color: colors.textSecondary }]}>
               {lista.length === 0
                 ? 'Todavía no hay actividad. Se empieza a registrar cuando cada uno abre la versión nueva de la app.'
+                : q ? 'No hay nadie con ese nombre o DNI.'
                 : filtro === 'vivo' ? 'Nadie está usando la app en este momento.' : 'Nadie abrió la app hoy.'}
             </Text>
           )}
@@ -161,7 +203,9 @@ function makeStyles() {
     header:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
     atras:     { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
     titulo:    { fontSize: 20, fontWeight: '800' },
-    resumen:   { flexDirection: 'row', gap: 10, paddingHorizontal: 16, marginBottom: 14 },
+    resumen:   { flexDirection: 'row', gap: 10, paddingHorizontal: 16, marginBottom: 12 },
+    buscador:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 14, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1 },
+    buscadorInput: { flex: 1, fontSize: 15, paddingVertical: 10 },
     dato:      { flex: 1, borderRadius: 16, borderWidth: 1, paddingVertical: 12, alignItems: 'center' },
     datoN:     { fontSize: 24, fontWeight: '900' },
     datoLabel: { fontSize: 11, fontWeight: '700', marginTop: 2 },

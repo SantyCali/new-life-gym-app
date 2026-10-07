@@ -72,11 +72,16 @@ export async function searchUsers(q) {
     .slice(0, 15);
 }
 
-export async function createTorneo({ nombre, creadoPor }) {
+// soloPasos: el gym no suma (lo elige el creador). Los torneos de antes no lo
+// tienen y siguen siendo de pasos y gym.
+// duracionDias: 7, 14 o los que elija (personalizado, de 1 a DURACION_MAX).
+export const DURACION_MAX = 365;
+export async function createTorneo({ nombre, creadoPor, soloPasos = false, duracionDias = DURACION_DIAS }) {
   const userSnap = await getDoc(doc(db, 'users', creadoPor));
   const u = userSnap.data() ?? {};
 
-  const fechaFin = Timestamp.fromMillis(Date.now() + DURACION_DIAS * 24 * 60 * 60 * 1000);
+  const dias = Math.min(DURACION_MAX, Math.max(1, Math.round(Number(duracionDias) || DURACION_DIAS)));
+  const fechaFin = Timestamp.fromMillis(Date.now() + dias * 24 * 60 * 60 * 1000);
 
   const ref = await addDoc(TORNEOS, {
     nombre: nombre.trim(),
@@ -86,6 +91,8 @@ export async function createTorneo({ nombre, creadoPor }) {
     fechaFin,
     activo: true,
     participantUids: [creadoPor],
+    soloPasos: !!soloPasos,
+    duracionDias: dias,
   });
 
   await addDoc(collection(db, 'torneos', ref.id, 'participantes'), {
@@ -175,12 +182,12 @@ async function avisarSiPase(torneoId, torneo, uid, antes, ahora, filas, miNombre
 // Push "te sumaron a un torneo" desde el celular de quien invita: le llega al
 // invitado en el momento, con la app cerrada. El código para mandarle está en
 // pushTokens/{uid} (lo escribe cada usuario al abrir la app).
-async function avisarInvitacion(targetUid, torneoId, quien, nombreTorneo) {
+async function avisarInvitacion(targetUid, torneoId, quien, nombreTorneo, soloPasos = false) {
   try {
     const nombre = nombreTorneo ?? 'un torneo';
     return await mandarPush(targetUid, {
       title: '🏆 Te sumaron a un torneo',
-      body: `${quien} te agregó a "${nombre}". ¡A sumar pasos y visitas al gym!`,
+      body: `${quien} te agregó a "${nombre}". ${soloPasos ? '¡A sumar pasos!' : '¡A sumar pasos y visitas al gym!'}`,
       data: { tipo: 'torneo', torneoId, nombre },
     });
   } catch {
@@ -208,7 +215,7 @@ export async function addParticipant(torneoId, targetUid, invitadoPorUid = null)
   // avisoTorneoService). Antes alcanzaba con tener un código guardado, y si
   // estaba vencido no le llegaba ni el push ni el aviso de respaldo.
   const tSnap = await getDoc(doc(db, 'torneos', torneoId)).catch(() => null);
-  const avisoPush = await avisarInvitacion(targetUid, torneoId, quien, tSnap?.data()?.nombre);
+  const avisoPush = await avisarInvitacion(targetUid, torneoId, quien, tSnap?.data()?.nombre, !!tSnap?.data()?.soloPasos);
 
   await addDoc(partsCol, {
     uid:           targetUid,
@@ -283,20 +290,33 @@ export function torneoTerminado(torneo, ahora = Date.now()) {
 // (pasos, gym): se descuentan los premios (logros, otros torneos), que se
 // acumulan en xpExtra. Con el torneo terminado se usa la foto del cierre; si
 // no hay (cuenta con la versión anterior de la app), los puntos de ahora.
-export function puntosEnTorneo(p, actual = {}, terminado = false) {
+export function puntosEnTorneo(p, actual = {}, terminado = false, soloPasos = false) {
   // Versión nueva: puntos por día de actividad (ver puntosDelTorneo), los
   // calcula el celular de cada participante.
-  if (p.xpTorneo != null) return { xpGanado: p.xpTorneo, gymGanado: p.gymTorneo ?? 0 };
+  if (p.xpTorneo != null) {
+    if (soloPasos) return { xpGanado: xpDeJuego({ soloPasos }, p), gymGanado: 0 };
+    return { xpGanado: p.xpTorneo, gymGanado: p.gymTorneo ?? 0 };
+  }
   const foto = terminado && p.xpTotalFin != null;
   const xpTotal = foto ? p.xpTotalFin : (actual.xpTotal ?? 0);
   const xpExtra = foto ? (p.xpExtraFin ?? 0) : (actual.xpExtra ?? 0);
   const gym = foto ? (p.gymFin ?? 0) : (actual.gymVisitCount ?? 0);
   const xpBruto   = xpTotal - (p.xpTotalInicio ?? 0);
   const xpPremios = xpExtra - (p.xpExtraInicio ?? 0);
-  return {
-    xpGanado:  Math.max(0, xpBruto - Math.max(0, xpPremios)),
-    gymGanado: Math.max(0, gym - (p.gymInicio ?? 0)),
-  };
+  const gymGanado = Math.max(0, gym - (p.gymInicio ?? 0));
+  const xpGanado  = Math.max(0, xpBruto - Math.max(0, xpPremios));
+  if (soloPasos) return { xpGanado: Math.max(0, xpGanado - gymGanado * XP_GYM_VISIT), gymGanado: 0 };
+  return { xpGanado, gymGanado };
+}
+
+// Puntos que cuentan en el juego. La fila siempre guarda los puntos con el
+// gym incluido (xpTorneo) y los días de gym aparte (gymTorneo): en un torneo
+// de solo pasos el gym se descuenta acá, así da bien aunque el jugador tenga
+// una versión de la app que no conoce los torneos de solo pasos.
+export function xpDeJuego(torneo, fila) {
+  const xp = fila?.xpTorneo ?? 0;
+  if (!torneo?.soloPasos) return xp;
+  return Math.max(0, xp - (fila?.gymTorneo ?? 0) * XP_GYM_VISIT);
 }
 
 // Puntos del torneo por DÍA DE ACTIVIDAD: los puntos de pasos (xpOtorgado de
@@ -320,7 +340,15 @@ async function puntosDelTorneo(uid, desde, hasta, gymDni) {
     dni ? getDocs(query(collection(db, 'ingresosActivos'), where('dni', '==', dni))) : Promise.resolve({ docs: [] }),
   ]);
   let xp = 0;
-  pasos.forEach((d) => { xp += d.data().xpOtorgado ?? 0; });
+  const porDia = {};
+  pasos.forEach((d) => {
+    const s = d.data();
+    xp += s.xpOtorgado ?? 0;
+    const fecha = s.date ?? d.id;
+    if ((s.steps ?? 0) > 0 || (s.xpOtorgado ?? 0) > 0) {
+      porDia[fecha] = { fecha, pasos: s.steps ?? 0, xpPasos: s.xpOtorgado ?? 0, xpGym: 0 };
+    }
+  });
 
   const dias = new Set();
   const enRango = (f) => f && f >= desde && f <= hasta;
@@ -335,13 +363,29 @@ async function puntosDelTorneo(uid, desde, hasta, gymDni) {
     if (enRango(fecha)) dias.add(fecha);
   });
   const gym = dias.size;
-  return { xp: xp + gym * XP_GYM_VISIT, gym };
+  dias.forEach((fecha) => {
+    porDia[fecha] = { ...(porDia[fecha] ?? { fecha, pasos: 0, xpPasos: 0 }), xpGym: XP_GYM_VISIT };
+  });
+  // Detalle por día (el más nuevo primero): lo ven todos los del torneo al
+  // tocar a alguien. Los pasos de cada uno siguen privados; esto es solo el
+  // resumen de los días del torneo.
+  const detalle = Object.values(porDia).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  return { xp: xp + gym * XP_GYM_VISIT, gym, detalle };
 }
+
+// Para saber si el detalle cambió (Firestore puede devolver los campos en
+// otro orden, así que no sirve comparar el JSON).
+const firmaDetalle = (lista) => (lista ?? [])
+  .map((x) => `${x.fecha}:${x.pasos}:${x.xpPasos}:${x.xpGym}`).join('|');
 
 // Actualiza la foto del usuario en sus torneos en curso. Se llama al abrir la
 // app, cuando cambian sus puntos y desde la tarea en segundo plano.
 export async function actualizarMisTorneos(uid) {
   if (!uid) return;
+  // En Expo Go (pruebas en el emulador) no se guarda nada: el emulador suele
+  // tener otra zona horaria, cortaba mal los días del torneo y bajaba los
+  // puntos de la tabla hasta que el celular de verdad los volvía a calcular.
+  if (IS_EXPO_GO_TORNEO) return;
   const [userSnap, torneos] = await Promise.all([
     getDoc(doc(db, 'users', uid)),
     getDocs(query(TORNEOS, where('participantUids', 'array-contains', uid))),
@@ -380,9 +424,20 @@ export async function actualizarMisTorneos(uid) {
             // ¿Pasé a alguien? (solo si ya tenía puntos por día: la primera
             // vez no se compara, para no avisar de golpe a todos)
             if (typeof d.xpTorneo === 'number' && !terminado) {
-              const todas = (await getDocs(collection(db, 'torneos', t.id, 'participantes')).catch(() => ({ docs: [] }))).docs.map((x) => x.data());
-              avisarSiPase(t.id, td, uid, d.xpTorneo, xpT, todas, miNombre).catch(() => {});
+              // Comparados con los puntos que cuentan en este torneo (sin el
+              // gym si es de solo pasos).
+              const todas = (await getDocs(collection(db, 'torneos', t.id, 'participantes')).catch(() => ({ docs: [] }))).docs
+                .map((x) => x.data())
+                .map((x) => (typeof x.xpTorneo === 'number' ? { ...x, xpTorneo: xpDeJuego(td, x) } : x));
+              const antes = xpDeJuego(td, d);
+              const ahora = xpDeJuego(td, { xpTorneo: xpT, gymTorneo: gymT });
+              avisarSiPase(t.id, td, uid, antes, ahora, todas, miNombre).catch(() => {});
             }
+          }
+          // Los pasos pueden subir sin que cambien los puntos: el detalle se
+          // compara aparte.
+          if (firmaDetalle(d.detalleTorneo) !== firmaDetalle(r.detalle)) {
+            upd.detalleTorneo = r.detalle;
           }
         } catch {}
       }
@@ -417,7 +472,7 @@ export async function congelarResultado(torneoId, leaderboard) {
 export function puntosDeFila(torneo, p, actual = {}, terminado = false) {
   const r = torneo?.resultado?.[p.uid];
   if (r) return { xpGanado: r.xp ?? 0, gymGanado: r.gym ?? 0 };
-  return puntosEnTorneo(p, actual, terminado);
+  return puntosEnTorneo(p, actual, terminado, !!torneo?.soloPasos);
 }
 
 // Salir del torneo (cualquiera, también el creador). Sin avisos para nadie.
@@ -494,6 +549,20 @@ export { PRIZES };
 
 export async function eliminarTorneo(torneoId) {
   await deleteDoc(doc(db, 'torneos', torneoId));
+}
+
+// Cuánto dura: "1 semana", "2 semanas", "1 mes" o "10 días". Los torneos de
+// antes no guardaban la duración: sale de las fechas.
+export function textoDuracion(torneo) {
+  let dias = torneo?.duracionDias;
+  if (!dias) {
+    const ini = torneo?.fechaInicio?.toMillis?.();
+    const fin = torneo?.fechaFin?.toMillis?.();
+    dias = ini && fin ? Math.round((fin - ini) / (24 * 60 * 60 * 1000)) : DURACION_DIAS;
+  }
+  if (dias === 30 || dias === 31) return '1 mes';
+  if (dias % 7 === 0) return dias === 7 ? '1 semana' : `${dias / 7} semanas`;
+  return dias === 1 ? '1 día' : `${dias} días`;
 }
 
 export function tiempoRestante(fechaFin) {

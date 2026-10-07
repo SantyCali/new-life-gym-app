@@ -17,6 +17,7 @@ const KOTLIN_FILES = [
   'PasosEnLaNube.kt',
   'PuntosHeadlessService.kt',
   'RelojSalud.kt',
+  'GuardiaPasos.kt',
 ];
 
 // ── 1. Copia los archivos Kotlin al proyecto Android ─────────────────────────
@@ -124,10 +125,26 @@ function withManifest(config) {
               { $: { 'android:name': 'android.intent.action.BOOT_COMPLETED' } },
               { $: { 'android:name': 'android.intent.action.QUICKBOOT_POWERON' } },
               { $: { 'android:name': 'com.htc.intent.action.QUICKBOOT_POWERON' } },
+              // Play Store actualizó la app (ver BootReceiver).
+              { $: { 'android:name': 'android.intent.action.MY_PACKAGE_REPLACED' } },
             ],
           },
         ],
       });
+    }
+
+    // Si el receptor ya existía (proyecto generado antes), sumarle la acción
+    // de "app actualizada".
+    const boot = app.receiver.find((r) => r.$['android:name'] === '.BootReceiver');
+    const acciones = boot?.['intent-filter']?.[0]?.action;
+    if (acciones && !acciones.find((a) => a.$['android:name'] === 'android.intent.action.MY_PACKAGE_REPLACED')) {
+      acciones.push({ $: { 'android:name': 'android.intent.action.MY_PACKAGE_REPLACED' } });
+    }
+
+    // Despertador del contador: cada 15 min revisa si sigue andando y, si se
+    // murió, lo vuelve a arrancar (ver GuardiaPasos.kt).
+    if (!app.receiver.find((r) => r.$['android:name'] === '.GuardiaReceiver')) {
+      app.receiver.push({ $: { 'android:name': '.GuardiaReceiver', 'android:exported': 'false' } });
     }
 
     return config;

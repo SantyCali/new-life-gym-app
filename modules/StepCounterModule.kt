@@ -20,6 +20,7 @@ class StepCounterModule(reactContext: ReactApplicationContext) :
         try {
             val ctx    = reactApplicationContext
             val intent = Intent(ctx, StepCounterService::class.java)
+                .putExtra(GuardiaPasos.EXTRA_MOTIVO, "app")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ctx.startForegroundService(intent)
             } else {
@@ -35,6 +36,8 @@ class StepCounterModule(reactContext: ReactApplicationContext) :
     fun stopService(promise: Promise) {
         try {
             val ctx    = reactApplicationContext
+            // A propósito: que la guardia no lo vuelva a arrancar.
+            prefsPasos().edit().putBoolean(GuardiaPasos.KEY_DETENIDO, true).commit()
             val intent = Intent(ctx, StepCounterService::class.java)
             ctx.stopService(intent)
             promise.resolve(true)
@@ -51,10 +54,11 @@ class StepCounterModule(reactContext: ReactApplicationContext) :
             val today  = todayString()
             val saved  = prefs.getString(StepCounterService.KEY_LAST_DATE, "") ?: ""
             val sensor = if (saved == today) prefs.getInt(StepCounterService.KEY_TODAY_STEPS, 0) else 0
-            // Si el reloj contó más hoy (la persona caminó sin el celular), vale el reloj.
+            // Si el reloj contó más hoy (la persona caminó sin el celular), vale el
+            // reloj; o solo el reloj, si eligió eso (mismo cálculo que el servicio).
             val reloj = if (prefs.getString(StepCounterService.KEY_RELOJ_FECHA, "") == today)
                 prefs.getInt(StepCounterService.KEY_RELOJ_PASOS, 0) else 0
-            promise.resolve(maxOf(sensor, reloj))
+            promise.resolve(StepCounterService.pasosAMostrar(prefs, sensor, reloj))
         } catch (e: Exception) {
             promise.reject("ERR_GET", e.message)
         }
@@ -203,9 +207,47 @@ class StepCounterModule(reactContext: ReactApplicationContext) :
             val apps = Arguments.createArray()
             if (dados.contains(RelojSalud.PERMISO_PASOS)) RelojSalud.appsQueEscriben(ctx).forEach { apps.pushString(it) }
             r.putArray("apps", apps)
+            r.putBoolean("soloReloj", p.getBoolean(StepCounterService.KEY_SOLO_RELOJ, false))
             promise.resolve(r)
         } catch (e: Exception) {
             promise.reject("ERR_RELOJ_ESTADO", e.message)
+        }
+    }
+
+    // Interruptor "contar solo los pasos del reloj". La notificación se
+    // actualiza enseguida con el número nuevo.
+    @ReactMethod
+    fun setSoloReloj(solo: Boolean, promise: Promise) {
+        try {
+            prefsPasos().edit().putBoolean(StepCounterService.KEY_SOLO_RELOJ, solo).apply()
+            val ctx = reactApplicationContext
+            val intent = Intent(ctx, StepCounterService::class.java).apply {
+                action = StepCounterService.ACTION_UPDATE_NOTIF
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(intent)
+            else ctx.startService(intent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_SOLO_RELOJ", e.message)
+        }
+    }
+
+    // Registro de la guardia del contador (ver GuardiaPasos), para subirlo a
+    // actividad/{uid}: qué le pasó al contador y si la batería tiene
+    // restricciones.
+    @ReactMethod
+    fun getRegistroPasos(promise: Promise) {
+        try {
+            val ctx = reactApplicationContext
+            val r = Arguments.createMap()
+            val eventos = Arguments.createArray()
+            GuardiaPasos.registro(ctx).forEach { eventos.pushString(it) }
+            r.putArray("eventos", eventos)
+            r.putBoolean("bateriaSinRestricciones", GuardiaPasos.bateriaSinRestricciones(ctx))
+            r.putBoolean("vivo", StepCounterService.vivo)
+            promise.resolve(r)
+        } catch (e: Exception) {
+            promise.reject("ERR_REGISTRO", e.message)
         }
     }
 

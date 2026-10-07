@@ -60,6 +60,9 @@ class StepCounterService : Service(), SensorEventListener {
         const val KEY_RELOJ_LECTURA = "relojUltLectura"   // última lectura que funcionó (ms)
         const val KEY_RELOJ_HIST    = "relojUltHistorial" // último repaso de días anteriores (ms)
         const val ACTION_LEER_RELOJ = "NLG_LEER_RELOJ"
+        // Interruptor de la pantalla del reloj: contar solo los pasos del
+        // reloj (no los del celular). Sin el reloj conectado no cambia nada.
+        const val KEY_SOLO_RELOJ    = "soloReloj"
         private const val RELOJ_CADA_MS      = 5 * 60_000L
         private const val RELOJ_HIST_CADA_MS = 60 * 60_000L
         const val ACTION_UPDATE_NOTIF     = "NLG_UPDATE_NOTIFICATION"
@@ -78,6 +81,17 @@ class StepCounterService : Service(), SensorEventListener {
         // Piso mínimo de delta siempre aceptado, para no rechazar ráfagas cortas reales
         // cuando el tiempo transcurrido entre eventos es muy chico.
         private const val MIN_PLAUSIBLE_DELTA  = 10L
+
+        // ¿El contador está andando en este proceso? Lo mira la guardia
+        // (GuardiaPasos): si el proceso se murió, arranca en false.
+        @Volatile var vivo = false
+
+        // Los pasos del día que se muestran y se suben: el mayor entre el
+        // sensor del celular y el reloj (no se suman: si la persona lleva las
+        // dos cosas son los mismos pasos), o solo el reloj si así lo eligió.
+        fun pasosAMostrar(prefs: SharedPreferences, sensor: Int, reloj: Int): Int =
+            if (prefs.getBoolean(KEY_SOLO_RELOJ, false) && prefs.getBoolean(KEY_RELOJ_ACTIVO, false)) reloj
+            else maxOf(sensor, reloj)
     }
 
     private lateinit var sensorManager: SensorManager
@@ -102,9 +116,10 @@ class StepCounterService : Service(), SensorEventListener {
     private val hiloReloj = Executors.newSingleThreadExecutor()
     private val leyendoReloj = AtomicBoolean(false)
 
-    // Los pasos del día: el mayor entre el sensor del celular y el reloj.
-    // No se suman, porque si la persona lleva las dos cosas son los mismos pasos.
-    private fun pasosVisibles(): Int = maxOf(todaySteps, pasosReloj)
+    private fun pasosVisibles(): Int = pasosAMostrar(prefs, todaySteps, pasosReloj)
+
+    // Primer arranque desde que se creó el servicio (para el registro).
+    private var primerArranque = true
 
     // Cada 5 minutos lee lo que el reloj pasó a Health Connect. Va aparte
     // del sensor: si la persona camina sin el celular, el sensor no se mueve.
@@ -189,6 +204,7 @@ class StepCounterService : Service(), SensorEventListener {
             // Por si el cambio de día de las 00:00 se atrasó (el sistema
             // puede demorar los temporizadores con la pantalla apagada).
             if (lastDate.isNotEmpty() && todayString() != lastDate) cambioDeDia.run()
+            prefs.edit().putLong(GuardiaPasos.KEY_LATIDO, System.currentTimeMillis()).apply()
             handler.postDelayed(this, SENSOR_WATCHDOG_CHECK_MS)
         }
     }
@@ -229,6 +245,7 @@ class StepCounterService : Service(), SensorEventListener {
 
     override fun onCreate() {
         super.onCreate()
+        vivo = true
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         createNotificationChannels()
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -263,7 +280,9 @@ class StepCounterService : Service(), SensorEventListener {
             // sea para mostrar o para pasar a silencioso.
             Log.d(TAG, "ACTION_UPDATE_NOTIF recibido, silent=${prefs.getBoolean(KEY_SILENT, false)}")
             republishNotification()
-            return START_STICKY
+            // Si el servicio recién se crea con esta acción, sigue y arranca
+            // entero (antes quedaba sin contar hasta abrir la app).
+            if (!primerArranque) return START_STICKY
         }
 
         if (intent?.action == ACTION_NOTIF_DISMISSED) {
@@ -272,7 +291,7 @@ class StepCounterService : Service(), SensorEventListener {
             // pasos actuales. Si está en silencioso, se respeta y no se vuelve a mostrar.
             val silent = prefs.getBoolean(KEY_SILENT, false)
             if (!silent) republishNotification()
-            return START_STICKY
+            if (!primerArranque) return START_STICKY
         }
 
         if (intent?.action == ACTION_LEER_RELOJ && lastDate.isNotEmpty()) {
@@ -280,6 +299,22 @@ class StepCounterService : Service(), SensorEventListener {
             leerReloj(forzarHistorial = true)
             return START_STICKY
         }
+
+        if (primerArranque) {
+            primerArranque = false
+            // Registro: quién lo arrancó y cuánto estuvo parado. Sin intent =
+            // lo revivió Android solo (START_STICKY).
+            val motivo = intent?.getStringExtra(GuardiaPasos.EXTRA_MOTIVO)
+                ?: if (intent == null) "android" else "app"
+            val latido = prefs.getLong(GuardiaPasos.KEY_LATIDO, 0L)
+            val parado = System.currentTimeMillis() - latido
+            val detalle = if (latido > 0L && parado > 3 * 60_000L) "$motivo, parado ${GuardiaPasos.duracion(parado)}" else motivo
+            GuardiaPasos.anotar(this, "arranco", detalle)
+        }
+        prefs.edit().putBoolean(GuardiaPasos.KEY_DETENIDO, false)
+            .putLong(GuardiaPasos.KEY_LATIDO, System.currentTimeMillis()).apply()
+        GuardiaPasos.programar(this)
+        GuardiaPasos.sacarAvisoDeParado(this)
 
         loadSavedData()
         republishNotification()
@@ -319,10 +354,25 @@ class StepCounterService : Service(), SensorEventListener {
             // reiniciar el foreground state), antes no quedaba ningún rastro —
             // con este log al menos se puede ver la causa real en logcat.
             Log.e(TAG, "republishNotification FALLÓ", e)
+            GuardiaPasos.anotar(this, "fallo_notificacion", e.javaClass.simpleName)
         }
     }
 
+    // La persona deslizó la app para cerrarla. El contador sigue (stopWithTask
+    // = false), pero algunos fabricantes lo cierran igual: la guardia revisa
+    // en unos segundos y, si se murió, lo vuelve a arrancar.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        GuardiaPasos.anotar(this, "cerraron_la_app", "")
+        GuardiaPasos.programar(this, 10_000L)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        vivo = false
+        // Si no lo paró la app a propósito, la guardia lo revive.
+        val aProposito = prefs.getBoolean(GuardiaPasos.KEY_DETENIDO, false)
+        GuardiaPasos.anotar(this, "se_cerro", if (aProposito) "lo paró la app" else "")
+        if (!aProposito) GuardiaPasos.programar(this, 30_000L)
         handler.removeCallbacksAndMessages(null)
         sensorManager.unregisterListener(this)
         wakeLock?.let { if (it.isHeld) it.release() }

@@ -11,6 +11,8 @@ import {
   Platform,
   ActivityIndicator,
   Image,
+  Pressable,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +32,7 @@ import {
   searchUsers,
   busquedaCompleta,
   tiempoRestante,
+  textoDuracion,
   torneoTerminado,
   torneoCerrado,
   puntosEnTorneo,
@@ -40,6 +43,25 @@ import {
 } from '../services/torneoService';
 
 const MEDAL = ['🥇', '🥈', '🥉'];
+
+const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+// "2026-10-06" → "Lun 6/10"
+function etiquetaDia(fecha) {
+  const [y, m, d] = String(fecha).split('-').map(Number);
+  if (!y || !m || !d) return fecha;
+  return `${DIAS_SEMANA[new Date(y, m - 1, d).getDay()]} ${d}/${m}`;
+}
+
+const miles = (n) => Number(n ?? 0).toLocaleString('es-AR');
+
+// Timestamp → "lun 5/10 a las 18:32"
+function cuandoEntro(ts) {
+  const d = ts?.toDate?.();
+  if (!d) return null;
+  const hora = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${DIAS_SEMANA[d.getDay()].toLowerCase()} ${d.getDate()}/${d.getMonth() + 1} a las ${hora}`;
+}
 
 function getInitials(nombre, apellido) {
   return `${(nombre ?? '')[0] ?? ''}${(apellido ?? '')[0] ?? ''}`.toUpperCase();
@@ -67,6 +89,7 @@ export default function TorneoDetailScreen({ route, navigation }) {
   const [statsDe,      setStatsDe]      = useState('');   // uids de la última lectura de stats
   const [finalizando,  setFinalizando]  = useState(false);
   const [resultModal,  setResultModal]  = useState(false);
+  const [detalleUid,   setDetalleUid]   = useState(null);   // a quién se le mira el detalle
 
   const [searchModal,   setSearchModal]   = useState(false);
   const [searchQuery,   setSearchQuery]   = useState('');
@@ -93,6 +116,8 @@ export default function TorneoDetailScreen({ route, navigation }) {
   // Pasó la fecha de fin o se finalizó: la tabla queda congelada.
   const terminado = torneoTerminado(torneo);
   const cerrado = torneoCerrado(torneo);
+  // Solo pasos: el gym no suma (ver xpDeJuego).
+  const soloPasos = !!torneo?.soloPasos;
 
   const refreshStats = useCallback(async () => {
     const parts = participantesRef.current;
@@ -260,7 +285,11 @@ export default function TorneoDetailScreen({ route, navigation }) {
     const initials = getInitials(item.nombre, item.apellido);
     const bg = avatarColor(item.uid);
     return (
-      <View style={[styles.row, { backgroundColor: colors.surfaceElevated, borderColor: index === 0 ? '#FBBF2440' : colors.border }]}>
+      <TouchableOpacity
+        activeOpacity={0.75}
+        onPress={() => setDetalleUid(item.uid)}
+        style={[styles.row, { backgroundColor: colors.surfaceElevated, borderColor: index === 0 ? '#FBBF2440' : colors.border }]}
+      >
         <View style={styles.rankWrap}>
           {medal
             ? <Text style={styles.medal}>{medal}</Text>
@@ -281,7 +310,9 @@ export default function TorneoDetailScreen({ route, navigation }) {
             <View style={[styles.nivelChip, { backgroundColor: colors.primaryDim12, borderColor: colors.primaryBorder }]}>
               <Text style={[styles.nivelText, { color: colors.primary }]}>Nv. {item.nivel}</Text>
             </View>
-            <Text style={[styles.gymCount, { color: colors.textSecondary }]}>{item.gymGanado} gym</Text>
+            {!soloPasos && (
+              <Text style={[styles.gymCount, { color: colors.textSecondary }]}>{item.gymGanado} gym</Text>
+            )}
           </View>
         </View>
         <Text style={styles.xpGanado}>+{item.xpGanado} XP</Text>
@@ -290,9 +321,15 @@ export default function TorneoDetailScreen({ route, navigation }) {
             <Ionicons name="close-circle-outline" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         )}
-      </View>
+      </TouchableOpacity>
     );
-  }, [colors, styles, isCreator, terminado, user?.uid, handleSacar]);
+  }, [colors, styles, isCreator, terminado, user?.uid, handleSacar, soloPasos]);
+
+  // Fila que se está mirando, siempre con los números de ahora.
+  const detalle = detalleUid ? leaderboard.find(p => p.uid === detalleUid) : null;
+  const detallePuesto = detalle ? leaderboard.indexOf(detalle) : -1;
+  // En solo pasos, los días que solo fue al gym no se muestran.
+  const diasDetalle = (detalle?.detalleTorneo ?? []).filter(d => !soloPasos || d.pasos > 0 || d.xpPasos > 0);
 
   const renderSearchResult = useCallback(({ item }) => {
     const fb = feedback[item.uid];
@@ -352,11 +389,21 @@ export default function TorneoDetailScreen({ route, navigation }) {
             <View style={[styles.timerRow, { backgroundColor: t.vencido ? '#EF444415' : colors.surfaceElevated, borderColor: t.vencido ? '#EF444430' : colors.border }]}>
               <Ionicons name="time-outline" size={14} color={t.vencido ? '#EF4444' : colors.textSecondary} />
               <Text style={[styles.timerText, { color: t.vencido ? '#EF4444' : colors.textSecondary }]}>
-                {t.vencido ? 'El torneo terminó' : `${t.texto} · Dura 2 semanas`}
+                {t.vencido ? 'El torneo terminó' : `${t.texto} · Dura ${textoDuracion(torneo)}`}
               </Text>
             </View>
           );
         })()}
+
+        {/* Cómo se juega: lo eligió el creador al armarlo. */}
+        {torneo && (
+          <View style={[styles.timerRow, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
+            <Text style={styles.modoIcono}>{soloPasos ? '👟' : '👟🏋️'}</Text>
+            <Text style={[styles.timerText, { color: colors.textSecondary }]}>
+              {soloPasos ? 'Solo pasos · el gym no suma' : 'Pasos y gym · 150 XP por día de gym'}
+            </Text>
+          </View>
+        )}
 
         {/* Agregar jugador */}
         {!terminado && (
@@ -469,6 +516,93 @@ export default function TorneoDetailScreen({ route, navigation }) {
               <Text style={styles.resultBtnText}>¡Genial!</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Detalle de un participante: cómo sumó sus puntos, día por día. Tocar
+          afuera lo cierra. */}
+      <Modal
+        visible={!!detalle}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDetalleUid(null)}
+        statusBarTranslucent
+        navigationBarTranslucent
+      >
+        <View style={styles.detalleOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setDetalleUid(null)} />
+          {detalle && (
+            <View style={[styles.detalleCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: insets.bottom + spacing.lg }]}>
+              <View style={styles.detalleHead}>
+                <View style={[styles.avatar, { backgroundColor: avatarColor(detalle.uid) }]}>
+                  {detalle.photoBase64
+                    ? <Image source={{ uri: `data:image/jpeg;base64,${detalle.photoBase64}` }} style={styles.avatarImg} />
+                    : <Text style={styles.initials}>{getInitials(detalle.nombre, detalle.apellido)}</Text>
+                  }
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
+                    {`${detalle.nombre} ${detalle.apellido}`.trim() || 'Sin nombre'}
+                  </Text>
+                  <Text style={[styles.detalleSub, { color: colors.textSecondary }]}>
+                    {`${MEDAL[detallePuesto] ?? `${detallePuesto + 1}°`} en el torneo · `}
+                    {soloPasos ? 'solo pasos' : `${detalle.gymGanado} ${detalle.gymGanado === 1 ? 'día' : 'días'} de gym`}
+                  </Text>
+                  {/* Cuándo entró al torneo (o lo creó). */}
+                  {cuandoEntro(detalle.joinedAt) && (
+                    <Text style={[styles.detalleSub, { color: colors.textTertiary, marginTop: 1 }]}>
+                      {/* "Creó" solo si entró al arrancar el torneo: si el creador
+                          se fue, el que quedó a cargo entró después. */}
+                      {`${torneo?.creadoPor === detalle.uid
+                        && Math.abs((detalle.joinedAt?.toMillis?.() ?? 0) - (torneo?.fechaInicio?.toMillis?.() ?? 0)) < 60_000
+                        ? 'Creó el torneo' : 'Entró'} el ${cuandoEntro(detalle.joinedAt)}`}
+                    </Text>
+                  )}
+                </View>
+                <Text style={styles.xpGanado}>+{detalle.xpGanado} XP</Text>
+              </View>
+
+              {diasDetalle.length ? (
+                <ScrollView style={styles.detalleLista} showsVerticalScrollIndicator={false}>
+                  {diasDetalle.map((d) => (
+                    <View key={d.fecha} style={[styles.detalleFila, { borderBottomColor: colors.border }]}>
+                      <Text style={[styles.detalleDia, { color: colors.text }]}>{etiquetaDia(d.fecha)}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.detallePasos, { color: colors.textSecondary }]}>
+                          {`👟 ${miles(d.pasos)} pasos`}
+                          {d.xpPasos > 0 ? <Text style={styles.detalleXp}>{`  +${d.xpPasos} XP`}</Text> : null}
+                        </Text>
+                        {!soloPasos && d.xpGym > 0 && (
+                          <Text style={[styles.detallePasos, { color: colors.textSecondary }]}>
+                            {'🏋️ Fue al gym'}
+                            <Text style={styles.detalleXp}>{`  +${d.xpGym} XP`}</Text>
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={[styles.detalleTotal, { color: colors.text }]}>{`+${(d.xpPasos ?? 0) + (soloPasos ? 0 : (d.xpGym ?? 0))}`}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.detalleVacio}>
+                  <Ionicons name="time-outline" size={28} color={colors.textTertiary} />
+                  <Text style={[styles.noResultsText, { color: colors.textSecondary, fontSize: 14 }]}>
+                    {detalle.xpGanado > 0
+                      ? 'Todavía no hay detalle. Aparece cuando abra la app actualizada.'
+                      : 'Todavía no sumó puntos en este torneo.'}
+                  </Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.detalleCerrar, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setDetalleUid(null)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.salirText, { color: colors.text }]}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </Modal>
 
@@ -799,6 +933,58 @@ function makeStyles(colors) {
     salirText: {
       fontSize: typography.sizes.sm,
       fontWeight: typography.weights.semibold,
+    },
+
+    modoIcono: { fontSize: 13 },
+    detalleOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'flex-end',
+      paddingHorizontal: spacing.lg,
+    },
+    detalleCard: {
+      borderRadius: 28,
+      borderWidth: 0.5,
+      padding: spacing.lg,
+      maxHeight: '80%',
+    },
+    detalleHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      marginBottom: spacing.md,
+    },
+    detalleSub: { fontSize: typography.sizes.xs },
+    detalleLista: { flexGrow: 0 },
+    detalleFila: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.sm + 2,
+      borderBottomWidth: 0.5,
+      gap: spacing.md,
+    },
+    detalleDia: {
+      width: 64,
+      fontSize: typography.sizes.sm,
+      fontWeight: typography.weights.bold,
+    },
+    detallePasos: { fontSize: typography.sizes.sm, lineHeight: 20 },
+    detalleXp: { color: '#22C55E', fontWeight: typography.weights.bold },
+    detalleTotal: {
+      fontSize: typography.sizes.base,
+      fontWeight: typography.weights.black,
+    },
+    detalleVacio: {
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingVertical: spacing.xl,
+    },
+    detalleCerrar: {
+      marginTop: spacing.md,
+      alignItems: 'center',
+      paddingVertical: spacing.sm + 4,
+      borderRadius: radius.full,
+      borderWidth: 1,
     },
 
     resultOverlay: {

@@ -37,6 +37,9 @@ import useGymCheckins from '../hooks/useGymCheckins';
 import { XP_GYM_VISIT } from '../services/gamificationService';
 import EnSalaCard from '../components/ui/EnSalaCard';
 import AvisoPermisoPasos from '../components/ui/AvisoPermisoPasos';
+import AvisoBateria from '../components/ui/AvisoBateria';
+import PuntoReloj from '../components/ui/PuntoReloj';
+import useRelojConectado from '../hooks/useRelojConectado';
 import { precargarClientes } from '../services/clientesService';
 import { useGymEvents } from '../context/GymEventsContext';
 
@@ -232,6 +235,7 @@ export default function HomeScreen({ navigation }) {
   const navigateDay = doNavigate;
 
   const { isAtGym, showGymCelebration } = useGymEvents();
+  const reloj = useRelojConectado();
 
   // Calorías totales: caminata + gym (solo si ya salió del gym hoy)
   const gymMinHoy = useMemo(() => {
@@ -377,6 +381,8 @@ export default function HomeScreen({ navigation }) {
 
         {/* Aviso si en Android falta el permiso de actividad física */}
         <AvisoPermisoPasos />
+        {/* Aviso si la batería tiene restricciones (el contador se puede parar) */}
+        <AvisoBateria />
 
         {/* ── Anillo de pasos ── */}
         <View style={styles.ringSection}>
@@ -411,6 +417,12 @@ export default function HomeScreen({ navigation }) {
                       {displaySteps.toLocaleString('es-AR')}
                     </Text>
                     <Text style={styles.stepLabel}>{dayLabel}</Text>
+                    {/* Reloj o pulsera pasando pasos: puntito naranja en vivo. */}
+                    {dayOffset === 0 && reloj && (
+                      <View style={styles.relojPunto}>
+                        <PuntoReloj apps={reloj.apps} onAbrir={() => navigation.navigate('Reloj')} />
+                      </View>
+                    )}
                     {dateLabel && (
                       <Text style={[styles.stepDateLabel, { color: colors.primary }]}>
                         {dateLabel}
@@ -820,6 +832,9 @@ function makeStyles(colors) { return StyleSheet.create({
     color: colors.textSecondary,
     letterSpacing: 2.5,
     marginTop: 4,
+  },
+  relojPunto: {
+    marginTop: 10,
   },
   stepDateLabel: {
     fontSize: 11,

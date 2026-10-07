@@ -71,8 +71,17 @@ export function ThemeProvider({ children }) {
     getDoc(doc(db, 'users', user.uid)).then(snap => {
       if (!snap.exists()) return;
       const { themeMode: m, accentColorId: a } = snap.data();
-      if (m && ['system', 'dark', 'light'].includes(m)) setThemeModeState(m);
-      if (a && ACCENT_COLORS.some(c => c.id === a))     setAccentColorIdState(a);
+      // También se guardan en el celular: si no, cada vez que se abría la app
+      // arrancaba con el color de fábrica (azul) y al segundo, cuando llegaba
+      // la cuenta, pasaba al elegido.
+      if (m && ['system', 'dark', 'light'].includes(m)) {
+        setThemeModeState(m);
+        AsyncStorage.setItem(STORAGE_KEY_MODE, m).catch(() => {});
+      }
+      if (a && ACCENT_COLORS.some(c => c.id === a)) {
+        setAccentColorIdState(a);
+        AsyncStorage.setItem(STORAGE_KEY_ACCENT, a).catch(() => {});
+      }
     }).catch(() => {});
   }, [user?.uid]);
 

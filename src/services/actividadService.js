@@ -11,6 +11,7 @@ import Constants from 'expo-constants';
 import { collection, doc, increment, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { todayDateString } from './stepService';
+import { getRegistroPasos } from './nativeStepService';
 
 function versionDeLaApp() {
   const v = Constants.expoConfig?.version ?? '';
@@ -35,7 +36,24 @@ export function registrarActividad(uid, { abrio = false, nombre = '', apellido =
     datos.ultimaApertura = serverTimestamp();
     datos.dias = { [todayDateString()]: increment(1) };
   }
-  return setDoc(doc(db, 'actividad', uid), datos, { merge: true }).catch(() => {});
+  const guardar = () => setDoc(doc(db, 'actividad', uid), datos, { merge: true }).catch(() => {});
+  // Android: al abrir, también el registro del contador de pasos (cuándo se
+  // paró, quién lo revivió, si la batería tiene restricciones). Así se puede
+  // ver por qué a alguien no le contó sin tener su celular.
+  if (abrio && Platform.OS === 'android') {
+    return getRegistroPasos().then((r) => {
+      if (r) {
+        datos.contador = {
+          eventos: (r.eventos ?? []).slice(-40),
+          bateriaSinRestricciones: !!r.bateriaSinRestricciones,
+          vivo: !!r.vivo,
+          leidoEn: serverTimestamp(),
+        };
+      }
+      return guardar();
+    }).catch(guardar);
+  }
+  return guardar();
 }
 
 export function salirDeLaApp(uid) {
