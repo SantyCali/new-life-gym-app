@@ -109,6 +109,7 @@ export function makeExerciseSlot(exercise, orden) {
     repeticiones:  12,
     carga:         null,
     observaciones: '',
+    superserie:    null,   // letra del grupo ('A', 'B'…) o null (ver constants/superseries)
     orden,
   };
 }

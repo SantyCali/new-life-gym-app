@@ -12,8 +12,12 @@ import { localDateString } from './stepService';
 import { leerPrivado } from './perfilPrivadoService';
 import { XP_GYM_VISIT } from './gamificationService';
 import { awardXPAndCoins } from './gamificationService';
+import { xpPorPasos } from './stepRewardsService';
 
 const DURACION_DIAS = 14;
+// Desde este día el bonus de la meta diaria no cuenta en los torneos (ver
+// puntosDelTorneo).
+const SIN_BONUS_META_DESDE = '2026-10-13';
 
 const PRIZES = [
   { xp: 500 },
@@ -319,8 +323,8 @@ export function xpDeJuego(torneo, fila) {
   return Math.max(0, xp - (fila?.gymTorneo ?? 0) * XP_GYM_VISIT);
 }
 
-// Puntos del torneo por DÍA DE ACTIVIDAD: los puntos de pasos (xpOtorgado de
-// cada día) y las visitas al gym de los días que duró el torneo, desde el día
+// Puntos del torneo por DÍA DE ACTIVIDAD: los puntos de pasos de cada día (sin
+// el bonus de la meta diaria) y las visitas al gym de los días que duró el torneo, desde el día
 // en que entró. No importa cuándo se sincronizaron: si alguien abre la app
 // tarde (dentro del margen de cierre), sus días del torneo igual cuentan.
 // No incluye premios (logros, otros torneos).
@@ -343,10 +347,18 @@ async function puntosDelTorneo(uid, desde, hasta, gymDni) {
   const porDia = {};
   pasos.forEach((d) => {
     const s = d.data();
-    xp += s.xpOtorgado ?? 0;
+    // Desde el 13/10/2026, sin el bonus de la meta diaria: cada uno elige su
+    // meta (6 mil, 10 mil…) y con una meta baja se ganaban 50 por día más
+    // fácil. Ese bonus sigue sumando para subir de nivel, pero no en el
+    // torneo. Los días de antes quedan como estaban (no se le saca a nadie
+    // lo que ya ganó). Nunca más de lo que se acreditó de verdad ese día.
     const fecha = s.date ?? d.id;
-    if ((s.steps ?? 0) > 0 || (s.xpOtorgado ?? 0) > 0) {
-      porDia[fecha] = { fecha, pasos: s.steps ?? 0, xpPasos: s.xpOtorgado ?? 0, xpGym: 0 };
+    const xpDia = fecha >= SIN_BONUS_META_DESDE
+      ? Math.min(s.xpOtorgado ?? 0, xpPorPasos(s.steps ?? 0, Infinity))
+      : (s.xpOtorgado ?? 0);
+    xp += xpDia;
+    if ((s.steps ?? 0) > 0 || xpDia > 0) {
+      porDia[fecha] = { fecha, pasos: s.steps ?? 0, xpPasos: xpDia, xpGym: 0 };
     }
   });
 

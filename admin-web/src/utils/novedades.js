@@ -13,3 +13,19 @@ export function rutinaEsNueva() {
 export function resumenEsNuevo() {
   return Date.now() < RESUMEN_NUEVO_HASTA;
 }
+
+// Imprimir la ficha médica: salió el 19/10/2026, se anuncia 2 días (19 y 20/10).
+const FICHA_NUEVA_HASTA = new Date('2026-10-21T00:00:00-03:00').getTime();
+
+export function fichaEsNueva() {
+  return Date.now() < FICHA_NUEVA_HASTA;
+}
+
+// Pagos (pago parcial, deuda, "Cargar pago"), plan y convenio al dar de alta,
+// descuento del convenio y "Altas y renovaciones": salieron el 22/10/2026, se
+// anuncian 2 días (22 y 23/10).
+const PAGOS_NUEVO_HASTA = new Date('2026-10-24T00:00:00-03:00').getTime();
+
+export function pagosEsNuevo() {
+  return Date.now() < PAGOS_NUEVO_HASTA;
+}

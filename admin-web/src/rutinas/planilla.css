@@ -166,8 +166,12 @@
   text-overflow: ellipsis;
 }
 .seccion td:first-child { text-align: left; }
-.seccion td.obs { text-align: left; font-size: 7.6pt; }
+.seccion td.obs { text-align: left; font-size: 9pt; }
+/* Los números de la rutina (día, orden, serie, repetición, carga), bien
+   grandes para leerlos de lejos en el gym. Entran en el alto de la fila. */
+.seccion td.dato { font-size: 12pt; }
 .hoja-2 .seccion td { height: 4.95mm; }
+.hoja-2 .seccion td.dato { font-size: 11.5pt; }
 .observaciones.apretado { font-size: 7pt; }
 .observaciones.apretado p { margin: 0; line-height: 1.15; }
 

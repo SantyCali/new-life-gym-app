@@ -112,6 +112,8 @@ function variante(nombreEjercicio, etiqueta) {
 }
 
 const unir = (...partes) => partes.filter(Boolean).join(' · ');
+// "Superserie A" al principio de la observación (los que van seguidos).
+const ss = (it) => (it.superserie ? `Superserie ${it.superserie}` : '');
 
 // Rutina de la app → contenido de la planilla.
 //   secciones: [{ hoja, titulo, filas: [{ etiqueta, dia, orden, serie, rep, carga, obs }] }]
@@ -146,11 +148,12 @@ export function armarPlanilla(rutina) {
     f.serie = numero(it.series);
     f.rep = numero(it.repeticiones);
     f.carga = it.carga != null && it.carga !== '' ? `${numero(it.carga)} kg` : '';
-    f.obs = unir(variante(it.nombre, etiqueta), it.observaciones);
+    f.obs = unir(ss(it), variante(it.nombre, etiqueta), it.observaciones);
     f.usada = it;
   };
   const mismo = (a, b) => a.series === b.series && a.repeticiones === b.repeticiones
-    && (a.carga ?? null) === (b.carga ?? null) && (a.observaciones ?? '') === (b.observaciones ?? '');
+    && (a.carga ?? null) === (b.carga ?? null) && (a.observaciones ?? '') === (b.observaciones ?? '')
+    && (a.superserie ?? null) === (b.superserie ?? null);
 
   const sobrantes = [];
   for (const it of items) {
@@ -180,7 +183,7 @@ export function armarPlanilla(rutina) {
     if (!libre) return false;
     llenar(libre, it, '');
     libre.etiqueta = it.nombre ?? '';
-    libre.obs = it.observaciones ?? '';
+    libre.obs = unir(ss(it), it.observaciones);
     return true;
   };
   const resto = sobrantes.filter((it) => !(it.grupoMuscular === 'hombros' && aLibre(it)));
@@ -190,6 +193,7 @@ export function armarPlanilla(rutina) {
     extras.push(`Día ${it.dia} · ${it.orden}° ${it.nombre ?? 'Ejercicio'}: ${unir(
       it.series && it.repeticiones ? `${numero(it.series)} x ${numero(it.repeticiones)}` : '',
       it.carga != null && it.carga !== '' ? `${numero(it.carga)} kg` : '',
+      ss(it),
       it.observaciones,
     )}`);
   });

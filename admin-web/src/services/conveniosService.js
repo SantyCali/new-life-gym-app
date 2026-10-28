@@ -21,6 +21,22 @@ export async function createConvenio({ nombre, descuentoPorcentaje }) {
   return ref.id;
 }
 
+// Porcentaje de descuento del convenio. Los creados desde la ficha del socio
+// quedaban con 0 y el porcentaje solo en el nombre ("descuento 10%"): si no
+// tiene uno cargado, se toma el del nombre.
+export function porcentajeDeConvenio(convenio) {
+  const guardado = Number(convenio?.descuentoPorcentaje) || 0;
+  if (guardado > 0) return Math.min(100, guardado);
+  const m = String(convenio?.nombre ?? '').match(/(\d+(?:[.,]\d+)?)\s*%/);
+  return m ? Math.min(100, Number(m[1].replace(',', '.'))) : 0;
+}
+
+// Precio con el descuento aplicado, redondeado a pesos.
+export function precioConDescuento(precio, porcentaje) {
+  const p = Number(precio) || 0;
+  return Math.round(p * (1 - (Number(porcentaje) || 0) / 100));
+}
+
 export async function updateConvenio(id, data) {
   await updateDoc(doc(db, 'convenios', id), data);
 }

@@ -20,6 +20,22 @@ function versionDeLaApp() {
   return update ? `${v} · update ${update.slice(0, 6)}` : v;
 }
 
+// Marca y modelo del celular ("Motorola moto g54 5G · Android 14"). Sirve
+// para saber qué celulares cierran la app y le apagan el contador de pasos, y
+// darle a cada uno los pasos exactos de su marca.
+function celularDeLaApp() {
+  try {
+    const Device = require('expo-device');
+    const marca = Device.manufacturer || Device.brand || '';
+    const modelo = Device.modelName || '';
+    const nombre = modelo.toLowerCase().startsWith(marca.toLowerCase()) ? modelo : `${marca} ${modelo}`.trim();
+    const sistema = Platform.OS === 'ios' ? 'iOS' : 'Android';
+    return nombre ? `${nombre} · ${sistema} ${Device.osVersion ?? ''}`.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export function registrarActividad(uid, { abrio = false, nombre = '', apellido = '' } = {}) {
   if (!uid) return Promise.resolve();
   const datos = {
@@ -28,6 +44,8 @@ export function registrarActividad(uid, { abrio = false, nombre = '', apellido =
     plataforma: Platform.OS,
     version: versionDeLaApp(),
   };
+  const celular = celularDeLaApp();
+  if (celular) datos.celular = celular;
   // El nombre solo si ya se cargó el perfil (si no, quedaba "Sin nombre").
   if (nombre) datos.nombre = nombre;
   if (apellido) datos.apellido = apellido;

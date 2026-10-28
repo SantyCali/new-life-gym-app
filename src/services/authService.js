@@ -76,7 +76,7 @@ export async function deleteAccount(password) {
   const uid = user.uid;
   try {
     await borrarPrivado(uid);
-    for (const sub of ['stepsHistory', 'gymHistory', 'weightHistory', 'visitasGym', 'rutinasGuardadas']) {
+    for (const sub of ['stepsHistory', 'gymHistory', 'weightHistory', 'visitasGym', 'rutinasGuardadas', 'rutinaHecha']) {
       const snap = await getDocs(collection(db, 'users', uid, sub)).catch(() => null);
       if (snap) await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
     }

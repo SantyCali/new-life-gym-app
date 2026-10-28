@@ -3,7 +3,9 @@
 export default function LiveDot({ color = '#c3f400', size = 'md' }) {
   const dim = size === 'sm' ? 'h-1.5 w-1.5' : size === 'lg' ? 'h-3 w-3' : 'h-2 w-2';
   return (
-    <span className={`relative flex shrink-0 ${dim}`}>
+    // transform-gpu: el punto y su onda en una capa propia que se mueve junto
+    // con lo de alrededor al scrollear (si no, quedaban corridos un instante).
+    <span className={`relative flex shrink-0 transform-gpu ${dim}`}>
       <span
         className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
         style={{ backgroundColor: color }}

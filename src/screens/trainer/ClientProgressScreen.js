@@ -12,6 +12,7 @@ import Animated, {
   interpolate,
   Extrapolation,
   Easing,
+  FadeIn,
 } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -342,34 +343,20 @@ function DetailRow({ icon, label, value, colors, styles }) {
 }
 
 // ── Collapsible month group ───────────────────────────────────────────────────
+// Mes del historial de peso que se abre y se cierra al tocarlo. Igual que en
+// Perfil: antes se animaba la altura medida y en Android el mes quedaba
+// abierto y transparente; ahora los datos se muestran o no, con un fundido.
 function CollapsiblePesoMonth({ label, entries, defaultExpanded, colors, styles }) {
   const [expanded, setExpanded]  = useState(defaultExpanded);
-  const heightRef   = useRef(defaultExpanded ? 1000 : 0);
-  const heightAnim  = useSharedValue(defaultExpanded ? 1000 : 0);
-  const opacityAnim = useSharedValue(defaultExpanded ? 1 : 0);
   const chevronAnim = useSharedValue(defaultExpanded ? 1 : 0);
 
-  const onContentLayout = useCallback((e) => {
-    const h = e.nativeEvent.layout.height;
-    if (h > 0) {
-      heightRef.current = h;
-      if (expanded) heightAnim.value = h;
-    }
-  }, [expanded]);
-
   const toggle = useCallback(() => {
-    const next = !expanded;
-    setExpanded(next);
-    heightAnim.value  = withTiming(next ? heightRef.current : 0,  { duration: 300, easing: Easing.bezier(0.4, 0, 0.2, 1) });
-    opacityAnim.value = withTiming(next ? 1 : 0, { duration: 240 });
-    chevronAnim.value = withTiming(next ? 1 : 0, { duration: 280, easing: Easing.out(Easing.ease) });
-  }, [expanded]);
-
-  const containerStyle = useAnimatedStyle(() => ({
-    height: heightAnim.value,
-    opacity: opacityAnim.value,
-    overflow: 'hidden',
-  }));
+    setExpanded((prev) => {
+      const next = !prev;
+      chevronAnim.value = withTiming(next ? 1 : 0, { duration: 280, easing: Easing.out(Easing.ease) });
+      return next;
+    });
+  }, [chevronAnim]);
 
   const chevronStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${chevronAnim.value * 180}deg` }],
@@ -386,16 +373,16 @@ function CollapsiblePesoMonth({ label, entries, defaultExpanded, colors, styles 
         </Animated.View>
       </TouchableOpacity>
 
-      <Animated.View style={containerStyle}>
-        <View onLayout={onContentLayout}>
+      {expanded && (
+        <Animated.View entering={FadeIn.duration(220)}>
           {entries.map((r, i) => (
             <View key={i} style={styles.histRow}>
               <Text style={styles.histPeso}>{r.peso} kg</Text>
               <Text style={styles.histFecha}>{fmtDate(r.fecha)}</Text>
             </View>
           ))}
-        </View>
-      </Animated.View>
+        </Animated.View>
+      )}
     </View>
   );
 }

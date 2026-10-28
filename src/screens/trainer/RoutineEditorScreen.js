@@ -22,6 +22,9 @@ import { saveRoutine, makeDay, makeExerciseSlot } from '../../services/routineSe
 import { avisarRutinaDelAlumno } from '../../services/avisosService';
 import { guardarPlantilla } from '../../services/plantillasService';
 import { getExerciseImage, getExerciseGif } from '../../constants/exerciseMedia';
+import { SUPERSERIES, colorSuperserie, VERDE_HECHO } from '../../constants/superseries';
+import { subscribeHechosDelDia } from '../../services/rutinaHechaService';
+import { todayDateString } from '../../services/stepService';
 
 // Arrastrar para reordenar: se usa la altura real de cada tarjeta (medida con
 // onLayout), así el hueco es exacto aunque unas tengan más datos que otras.
@@ -93,6 +96,13 @@ export default function RoutineEditorScreen({ route, navigation }) {
   );
   const [activeDayId, setActiveDayId] = useState(() => days[0]?.id);
   const [saving, setSaving]           = useState(false);
+
+  // Lo que el alumno marcó hoy con el ✓ (se ve "✓ Hoy" en cada ejercicio).
+  const [hechosHoy, setHechosHoy] = useState({});
+  useEffect(() => {
+    if (esPlantilla || !cliente?.uid) return;
+    return subscribeHechosDelDia(cliente.uid, todayDateString(), setHechosHoy);
+  }, [esPlantilla, cliente?.uid]);
   const [saved, setSaved]             = useState(false);
   const [addSheetOpen, setAddSheet]   = useState(false);
   const [editTarget, setEditTarget]   = useState(null);
@@ -473,6 +483,7 @@ export default function RoutineEditorScreen({ route, navigation }) {
               total={sortedExercises.length}
               colors={colors}
               styles={styles}
+              hecho={!!hechosHoy[slot.id]}
               onEdit={() => setEditTarget(slot)}
               onDelete={() => deleteExercise(slot.id)}
               onDrop={terminarArrastre}
@@ -546,10 +557,12 @@ export default function RoutineEditorScreen({ route, navigation }) {
 }
 
 // ── Contenido de una tarjeta (lo usan la de la lista y la flotante) ─────────
-function ContenidoTarjeta({ slot, colors, styles, handle, onThumb, onEdit, onDelete }) {
+// hecho: el alumno marcó este ejercicio con el ✓ hoy (lo ve el entrenador).
+function ContenidoTarjeta({ slot, colors, styles, handle, onThumb, onEdit, onDelete, hecho }) {
   const exRef     = { exerciseId: slot.exerciseId, id: slot.id };
   const thumbUri  = getExerciseImage(exRef);
   const groupMeta = MUSCLE_GROUPS.find(g => g.id === slot.grupoMuscular);
+  const ssColor   = colorSuperserie(slot.superserie);
   return (
     <>
       {handle}
@@ -562,11 +575,23 @@ function ContenidoTarjeta({ slot, colors, styles, handle, onThumb, onEdit, onDel
 
           <View style={styles.cardNameWrap}>
             <Text style={styles.cardName} numberOfLines={1}>{slot.nombre}</Text>
-            {groupMeta && (
-              <View style={styles.cardGroupPill}>
-                <Text style={styles.cardGroupText}>{groupMeta.label}</Text>
-              </View>
-            )}
+            <View style={styles.cardPills}>
+              {groupMeta && (
+                <View style={styles.cardGroupPill}>
+                  <Text style={styles.cardGroupText}>{groupMeta.label}</Text>
+                </View>
+              )}
+              {ssColor && (
+                <View style={[styles.cardGroupPill, { backgroundColor: ssColor + '2E', borderColor: ssColor }]}>
+                  <Text style={[styles.cardGroupText, { color: ssColor }]}>{`Superserie ${slot.superserie}`}</Text>
+                </View>
+              )}
+              {hecho && (
+                <View style={[styles.cardGroupPill, { backgroundColor: VERDE_HECHO + '26', borderColor: VERDE_HECHO }]}>
+                  <Text style={[styles.cardGroupText, { color: VERDE_HECHO }]}>✓ Hoy</Text>
+                </View>
+              )}
+            </View>
           </View>
           <View style={styles.cardActions}>
             <TouchableOpacity style={styles.editBtn} onPress={onEdit} hitSlop={8} disabled={!onEdit}>
@@ -598,7 +623,7 @@ function ContenidoTarjeta({ slot, colors, styles, handle, onThumb, onEdit, onDel
 }
 
 // ── Exercise Card (drag-to-reorder + delete button) ──────────────────────────
-function ExerciseCard({ slot, index, total, colors, styles, onEdit, onDelete, onDrop, onDragStart, draggingIndexSV, hoverIndexSV, medidasSV, acomodandoSV, listaRef, scrollYSV, arrastre, scrollNativa }) {
+function ExerciseCard({ slot, index, total, colors, styles, hecho, onEdit, onDelete, onDrop, onDragStart, draggingIndexSV, hoverIndexSV, medidasSV, acomodandoSV, listaRef, scrollYSV, arrastre, scrollNativa }) {
   const tarjetaRef = useAnimatedRef();
 
   // Se mide la vista de afuera (sin transform) y se descuenta el margen.
@@ -739,6 +764,7 @@ function ExerciseCard({ slot, index, total, colors, styles, onEdit, onDelete, on
             onThumb={() => setGifOpen(true)}
             onEdit={onEdit}
             onDelete={handleDelete}
+            hecho={hecho}
             handle={(
               <GestureDetector gesture={dragGesture}>
                 <View style={[styles.dragHandle, { backgroundColor: colors.surfaceContainerHigh }]}>
@@ -1050,6 +1076,7 @@ function EditExerciseSheet({ slot, onDismiss, onSave, colors }) {
     carga:         slot.carga != null ? slot.carga.toString() : '',
     descanso:      slot.descanso?.toString()      ?? '90',
     observaciones: slot.observaciones             ?? '',
+    superserie:    slot.superserie                ?? null,
   });
 
   useEffect(() => {
@@ -1071,6 +1098,7 @@ function EditExerciseSheet({ slot, onDismiss, onSave, colors }) {
       carga:         form.carga ? parseFloat(form.carga) : null,
       descanso:      parseInt(form.descanso)      || 90,
       observaciones: form.observaciones,
+      superserie:    form.superserie ?? null,
     });
   };
 
@@ -1125,6 +1153,28 @@ function EditExerciseSheet({ slot, onDismiss, onSave, colors }) {
                 numberOfLines={3}
               />
 
+              {/* Superserie: misma letra = se hacen seguidos (2 o más) */}
+              <Text style={[editSt.label, { color: colors.textTertiary, marginTop: 12 }]}>Superserie</Text>
+              <View style={editSt.ssFila}>
+                {[{ letra: null, color: null }, ...SUPERSERIES].map((s) => {
+                  const elegido = (form.superserie ?? null) === s.letra;
+                  const c = s.color ?? colors.textTertiary;
+                  return (
+                    <TouchableOpacity
+                      key={s.letra ?? 'no'}
+                      onPress={() => set('superserie', s.letra)}
+                      activeOpacity={0.8}
+                      style={[editSt.ssChip, { borderColor: elegido ? c : colors.borderLight, backgroundColor: elegido ? c + '2E' : 'transparent' }]}
+                    >
+                      <Text style={[editSt.ssChipText, { color: elegido ? c : colors.textSecondary }]}>{s.letra ?? 'No'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={[editSt.ssAyuda, { color: colors.textTertiary }]}>
+                Poné la misma letra en los ejercicios que van juntos (2 o más).
+              </Text>
+
               {/* Actions */}
               <View style={editSt.actions}>
                 <TouchableOpacity style={[editSt.cancelBtn, { borderColor: colors.borderLight }]} onPress={dismiss}>
@@ -1161,6 +1211,10 @@ function EditField({ label, value, onChangeText, keyboard, placeholder, colors }
 }
 
 const editSt = StyleSheet.create({
+  ssFila:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  ssChip:     { minWidth: 40, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, alignItems: 'center' },
+  ssChipText: { fontSize: 13, fontWeight: '800' },
+  ssAyuda:    { fontSize: 11, marginTop: 6 },
   title: {
     fontSize: typography.sizes.lg, fontWeight: typography.weights.black,
     marginBottom: spacing.lg,
@@ -1325,8 +1379,10 @@ function makeStyles(colors) {
     cardName: {
       fontSize: typography.sizes.base, fontWeight: typography.weights.black, color: colors.text,
     },
+    cardPills: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
     cardGroupPill: {
       alignSelf: 'flex-start',
+      borderWidth: 1, borderColor: 'transparent',
       backgroundColor: colors.primaryDim12,
       paddingHorizontal: 7, paddingVertical: 2,
       borderRadius: radius.md,

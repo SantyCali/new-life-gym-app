@@ -302,7 +302,9 @@ function PersonaEnSala({ ingreso, socio, ahora }) {
       className="group flex flex-col gap-3 rounded-xl border border-border bg-surfaceLow p-3 transition-colors hover:border-surfaceHighest hover:bg-surfaceHigh"
     >
       <div className="flex items-center gap-3">
-        <div className="relative">
+        {/* transform-gpu: la foto y su puntito verde en la misma capa, así
+            se mueven juntos al scrollear. */}
+        <div className="relative transform-gpu">
           <Avatar nombre={socio?.nombre ?? ingreso.nombre ?? '?'} apellido={socio?.apellido}
             foto={socio?.fotoBase64 ?? socio?.fotoApp} size="md" />
           <span className="absolute -bottom-0.5 -right-0.5">

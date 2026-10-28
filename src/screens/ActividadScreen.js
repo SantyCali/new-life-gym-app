@@ -108,6 +108,10 @@ export default function ActividadScreen({ navigation }) {
           <Text style={[st.meta, { color: colors.textSecondary }]}>
             {item.aperturas ?? 0} aperturas · hoy {item.hoy} · {item.plataforma === 'ios' ? 'iPhone' : 'Android'}{item.version ? ` · v${item.version}` : ''}
           </Text>
+          {/* Marca y modelo: para saber qué celulares le apagan el contador. */}
+          {!!item.celular && (
+            <Text style={[st.meta, { color: colors.textSecondary }]} numberOfLines={1}>📱 {item.celular}</Text>
+          )}
           {/* Con la batería restringida, Android puede parar el contador de
               pasos y no dejar que vuelva solo (ver GuardiaPasos.kt). */}
           {item.contador?.bateriaSinRestricciones === false && (

@@ -8,7 +8,7 @@ import { filtrarEnSala, estadoAforo } from '../services/asistenciasService';
 import Icon from '../components/Icon';
 import LiveDot from '../components/LiveDot';
 import LoadingScreen from '../components/LoadingScreen';
-import { rutinaEsNueva } from '../utils/novedades';
+import { rutinaEsNueva, pagosEsNuevo } from '../utils/novedades';
 
 const NAV_GROUPS = [
   {
@@ -19,6 +19,7 @@ const NAV_GROUPS = [
       { to: '/socios',  label: 'Socios',    icon: 'group', contador: true },
       { to: '/planes', label: 'Planes',    icon: 'card_membership' },
       { to: '/rutinas', label: 'Rutinas',  icon: 'sports_gymnastics', nuevo: rutinaEsNueva },
+      { to: '/movimientos', label: 'Altas y renovaciones', icon: 'published_with_changes', nuevo: pagosEsNuevo },
     ],
   },
   {
@@ -180,7 +181,10 @@ export default function AdminLayout() {
           <span className="font-display text-sm font-bold text-text">New Life Gym</span>
         </header>
 
-        <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
+        {/* will-change: Chrome mueve todo el contenido de una sola pieza al
+            scrollear. Sin esto, lo animado (los puntitos "en vivo") iba por
+            su lado y las fotos de las tarjetas quedaban despegadas un instante. */}
+        <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8 [will-change:scroll-position]">
           <div className="mx-auto max-w-[1600px]">
             <Outlet />
           </div>

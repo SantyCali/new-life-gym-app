@@ -12,7 +12,7 @@ export default function PlanillaRutina({ rutina, nombreSocio }) {
     <>
       <div className="hoja hoja-1">
         <header className="cab1">
-          <img className="sello" src="/planilla/sello.png" alt="New Life Gym" />
+          <img className="sello" src="/planilla/logo.png" alt="New Life Gym" />
           <div>
             <div className="marca">NEW LIFE GYM</div>
             <div className="dir">Pasaje Los Teros 1058</div>
@@ -80,11 +80,11 @@ function Seccion({ seccion }) {
         {seccion.filas.map((f, i) => (
           <tr key={i}>
             <td className={f.libre ? 'tinta' : ''}>{f.etiqueta}</td>
-            <td className="tinta">{f.dia}</td>
-            <td className="tinta">{f.orden}</td>
-            <td className="tinta">{f.serie}</td>
-            <td className="tinta">{f.rep}</td>
-            <td className="tinta">{f.carga}</td>
+            <td className="tinta dato">{f.dia}</td>
+            <td className="tinta dato">{f.orden}</td>
+            <td className="tinta dato">{f.serie}</td>
+            <td className="tinta dato">{f.rep}</td>
+            <td className="tinta dato">{f.carga}</td>
             <td className="tinta obs">{f.obs}</td>
           </tr>
         ))}

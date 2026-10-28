@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
+import { SUPERSERIES, colorSuperserie, VERDE_HECHO } from '../rutinas/superseries';
+import NuevoBadge from '../components/NuevoBadge';
+import { pagosEsNuevo } from '../utils/novedades';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import Icon from '../components/Icon';
@@ -25,6 +30,10 @@ import { getExerciseGif, getExerciseImage } from '../../../src/constants/exercis
 // Armar la rutina de un socio desde el panel. Se guarda en el mismo lugar que
 // la app (ver rutinasService), así que el socio la ve en su celular. También
 // se imprime en la planilla del gimnasio o se descarga en Excel.
+// Ejercicios que el socio marcó hoy con el ✓ en su app ({ [id]: true }).
+// Se ven como "✓ Hoy" en cada tarjeta (las reglas dejan leerlo al entrenador).
+const HechosHoy = createContext({});
+
 const OBJETIVOS_APP = {
   perder_peso: 'Perder peso',
   ganar_musculo: 'Ganar músculo',
@@ -52,6 +61,16 @@ export default function RutinaSocioPage() {
   const socio = socios.find((s) => s.dni === dni);
 
   const [cuenta, setCuenta] = useState(undefined); // undefined: cargando · null: sin app
+  const [hechosHoy, setHechosHoy] = useState({});
+  useEffect(() => {
+    if (!cuenta?.uid) return undefined;
+    const hoy = new Date().toLocaleDateString('sv-SE');
+    return onSnapshot(
+      doc(db, 'users', cuenta.uid, 'rutinaHecha', hoy),
+      (snap) => setHechosHoy(snap.exists() ? (snap.data().ejercicios ?? {}) : {}),
+      () => setHechosHoy({}),
+    );
+  }, [cuenta?.uid]);
   const [rutina, setRutina] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [cambios, setCambios] = useState(false);
@@ -153,6 +172,7 @@ export default function RutinaSocioPage() {
   }
 
   return (
+    <HechosHoy.Provider value={hechosHoy}>
     <div className="pb-24">
       <nav className="mb-4 flex items-center gap-2 text-sm text-textSecondary">
         <Link to="/socios" className="hover:text-text">Socios</Link>
@@ -280,6 +300,7 @@ export default function RutinaSocioPage() {
 
       {verPlantillas && <ElegirPlantilla onClose={() => setVerPlantillas(false)} onElegir={usarPlantilla} />}
     </div>
+    </HechosHoy.Provider>
   );
 }
 
@@ -326,12 +347,16 @@ function Dia({ dia, indice, total, onNombre, onBorrar, onMover, onAgregar, onEdi
         }}
       >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-          <div className="flex flex-col gap-2.5">
+          <div className="flex flex-col">
             {ejercicios.map((e, j) => (
               <TarjetaOrdenable
                 key={ids[j]}
                 id={ids[j]}
                 ejercicio={e}
+                // Si el que sigue es de la misma superserie, se unen con la línea.
+                unidoAbajo={e.superserie && ejercicios[j + 1]?.superserie === e.superserie
+                  ? colorSuperserie(e.superserie) : null}
+                unidoArriba={!!e.superserie && ejercicios[j - 1]?.superserie === e.superserie}
                 onGif={() => setGif(e)}
                 onEditar={() => onEditar(j)}
                 onQuitar={() => onQuitar(j)}
@@ -356,22 +381,26 @@ function Dia({ dia, indice, total, onNombre, onBorrar, onMover, onAgregar, onEdi
   );
 }
 
-function TarjetaOrdenable({ id, ejercicio, onGif, onEditar, onQuitar }) {
+// unidoAbajo: color de la superserie si el ejercicio de abajo es del mismo
+// grupo (se dibuja la línea que los une, como en la app); si no, null.
+function TarjetaOrdenable({ id, ejercicio, unidoAbajo, unidoArriba, onGif, onEditar, onQuitar }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={isDragging ? 'opacity-0' : ''}
+      className={`${isDragging ? 'opacity-0' : ''} ${unidoAbajo ? '' : 'mb-2.5'}`}
     >
       <Tarjeta
         ejercicio={ejercicio}
+        unidoAbajo={!!unidoAbajo}
+        unidoArriba={unidoArriba}
         manija={(
           <button
             ref={setActivatorNodeRef}
             {...attributes}
             {...listeners}
-            className="flex w-9 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-l-xl bg-surfaceHighest/60 text-textTertiary transition-colors hover:text-text active:cursor-grabbing"
+            className={`flex w-9 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-l-xl bg-surfaceHighest/60 text-textTertiary transition-colors hover:text-text active:cursor-grabbing`}
             title="Arrastrá para cambiar el orden"
             aria-label="Mover ejercicio"
           >
@@ -382,17 +411,36 @@ function TarjetaOrdenable({ id, ejercicio, onGif, onEditar, onQuitar }) {
         onEditar={onEditar}
         onQuitar={onQuitar}
       />
+      {unidoAbajo && (
+        <div className="relative h-8">
+          {/* Línea que une las dos tarjetas, igual que en la app: a la
+              altura de la manija, con el texto a la derecha. */}
+          <span className="absolute bottom-0 top-0 w-1 rounded-full" style={{ left: 16, backgroundColor: unidoAbajo }} />
+          <span className="absolute top-1/2 -translate-y-1/2 text-[0.6875rem] font-bold uppercase tracking-caps" style={{ left: 36, color: unidoAbajo }}>
+            + sin descanso
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
 // Tarjeta de un ejercicio, igual a la de la app: foto (tocá para el GIF),
 // nombre, músculo, series · reps · kg · descanso y observación.
-function Tarjeta({ ejercicio: e, manija, flotando, onGif, onEditar, onQuitar }) {
+function Tarjeta({ ejercicio: e, manija, flotando, unidoAbajo, unidoArriba, onGif, onEditar, onQuitar }) {
+  const hechos = useContext(HechosHoy);
   if (!e) return null;
   const grupo = MUSCLE_GROUPS.find((g) => g.id === e.grupoMuscular);
+  const ssColor = colorSuperserie(e.superserie);
+  const hecho = !!hechos[e.id];
   return (
-    <div className={`flex overflow-hidden rounded-xl border bg-surfaceHigh ${flotando ? 'scale-[1.02] border-accent/60 shadow-2xl shadow-black/60' : 'border-border'}`}>
+    <div
+      className={`flex overflow-hidden rounded-xl border bg-surfaceHigh ${flotando ? 'scale-[1.02] border-accent/60 shadow-2xl shadow-black/60' : 'border-border'}`}
+      style={{
+        ...(ssColor ? { borderLeft: `4px solid ${ssColor}` } : null),
+        ...(hecho && !flotando ? { borderColor: VERDE_HECHO } : null),
+      }}
+    >
       {manija ?? (
         <div className="flex w-9 shrink-0 items-center justify-center bg-surfaceHighest/60 text-text">
           <Icon name="drag_indicator" className="text-xl" />
@@ -415,7 +463,19 @@ function Tarjeta({ ejercicio: e, manija, flotando, onGif, onEditar, onQuitar }) 
           </button>
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold text-text">{e.nombre || 'Ejercicio sin nombre'}</p>
-            {grupo && <span className="mt-1 inline-block rounded-full bg-accent/15 px-2 py-0.5 text-[0.6875rem] font-bold text-accent">{grupo.label}</span>}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {grupo && <span className="inline-block rounded-full bg-accent/15 px-2 py-0.5 text-[0.6875rem] font-bold text-accent">{grupo.label}</span>}
+              {ssColor && (
+                <span className="inline-block rounded-full px-2 py-0.5 text-[0.6875rem] font-bold" style={{ color: ssColor, backgroundColor: `${ssColor}26` }}>
+                  Superserie {e.superserie}
+                </span>
+              )}
+              {hecho && (
+                <span className="inline-block rounded-full px-2 py-0.5 text-[0.6875rem] font-bold" style={{ color: VERDE_HECHO, backgroundColor: `${VERDE_HECHO}26` }} title="El socio lo marcó como hecho hoy">
+                  ✓ Hoy
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <button onClick={onEditar} disabled={!onEditar} className="rounded-lg p-2 text-accent transition-colors hover:bg-accent/10" title="Editar"><Icon name="edit" className="text-lg" /></button>
@@ -475,6 +535,7 @@ function EditarEjercicio({ ejercicio, onClose, onGuardar }) {
     carga: ejercicio.carga ?? '',
     descanso: ejercicio.descanso ?? 90,
     observaciones: ejercicio.observaciones ?? '',
+    superserie: ejercicio.superserie ?? null,
   });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   return (
@@ -498,6 +559,29 @@ function EditarEjercicio({ ejercicio, onClose, onGuardar }) {
         <Campo label="Observación">
           <input className="input" value={f.observaciones} onChange={(e) => set('observaciones')(e.target.value)} placeholder="Ej: Bajar lento" />
         </Campo>
+        {/* Superserie: misma letra = se hacen seguidos (2 o más) */}
+        <div className="flex flex-col gap-1">
+          <span className="label relative inline-block self-start pr-12">Superserie<NuevoBadge mostrar={pagosEsNuevo()} /></span>
+          <div className="flex flex-wrap gap-2">
+            {[{ letra: null, color: null }, ...SUPERSERIES].map((ss) => {
+              const elegido = (f.superserie ?? null) === ss.letra;
+              return (
+                <button
+                  key={ss.letra ?? 'no'}
+                  type="button"
+                  onClick={() => set('superserie')(ss.letra)}
+                  className="min-w-10 rounded-full border-2 px-3 py-1 text-sm font-bold transition-colors"
+                  style={elegido
+                    ? { borderColor: ss.color ?? '#8a93a3', color: ss.color ?? '#e5e7eb', backgroundColor: `${ss.color ?? '#8a93a3'}2E` }
+                    : { borderColor: 'rgba(255,255,255,0.12)', color: '#9aa3b2' }}
+                >
+                  {ss.letra ?? 'No'}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-xs text-textTertiary">Poné la misma letra en los ejercicios que van juntos (2 o más).</span>
+        </div>
         <div className="mt-1 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn-ghost">Cancelar</button>
           <button type="submit" className="btn-primary">Listo</button>

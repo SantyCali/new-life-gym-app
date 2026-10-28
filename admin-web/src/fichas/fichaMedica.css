@@ -1,0 +1,109 @@
+/* Ficha médica: una hoja A4 igual a la de papel del gimnasio. Usa la base de
+   la planilla de rutinas (.hoja, .planilla-pantalla, impresión: planilla.css). */
+
+/* .hoja.fm-hoja: tiene que ganarle a .hoja de la planilla de rutinas, que es
+   flex con espacio entre cada cosa (sumaba 3 mm por fila y no entraba). */
+.hoja.fm-hoja {
+  display: block;
+  padding: 9mm 10mm 8mm;
+  font-family: 'Roboto Condensed', 'Arial Narrow', Arial, sans-serif;
+  font-size: 9.6pt;
+  color: #111;
+}
+
+/* Cabecera */
+.fm-cabecera { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 3mm; }
+.fm-titulo { font-family: 'Anton', Impact, sans-serif; font-size: 44pt; line-height: 0.95; letter-spacing: 0.3pt; }
+.fm-subtitulo { display: flex; align-items: baseline; gap: 4mm; margin-top: 0.5mm; }
+.fm-marca { font-family: 'Anton', Impact, sans-serif; font-size: 19pt; line-height: 1; }
+.fm-direccion { font-family: Arial, sans-serif; font-size: 11pt; }
+.fm-socio {
+  display: flex; align-items: flex-end; gap: 2mm;
+  width: 62mm; margin-top: 1mm; padding: 2.5mm 3mm;
+  border: 0.35mm solid #111;
+  font-family: Arial, sans-serif; font-weight: 700; font-size: 14pt;
+}
+
+/* Barras negras de cada sección */
+.fm-barra {
+  margin-top: 3.2mm;
+  padding: 1.6mm 3mm;
+  background: #111; color: #fff;
+  font-family: Arial, sans-serif; font-weight: 700; font-size: 11.5pt; letter-spacing: 0.3pt;
+}
+.fm-barra-nota { font-size: 10.5pt; }
+
+/* Filas (una sí, una gris claro, como el papel) */
+.fm-fila {
+  display: flex; align-items: flex-end; gap: 2mm;
+  min-height: 6.9mm;
+  padding: 0 3mm 1.1mm;
+  font-family: Arial, sans-serif;
+}
+.fm-fila.claro { background: #ececec; }
+.fm-etq { white-space: nowrap; }
+
+/* Renglón para escribir: se toca y se escribe (azul tinta, como el resto). */
+.fm-linea {
+  display: inline-block;
+  min-width: 8mm;
+  min-height: 4.6mm;
+  border-bottom: 0.25mm solid #111;
+  padding: 0 1mm;
+  color: #1f3a8a;
+  font-family: 'Roboto Condensed', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 10.5pt;
+  line-height: 4.6mm;
+  white-space: nowrap;
+  overflow: hidden;
+  outline: none;
+}
+.fm-linea:focus { background: #fff7c2; }
+
+/* Sí / No con círculo que se marca */
+.fm-sino { display: inline-flex; align-items: flex-end; gap: 5mm; margin: 0 2mm; }
+.fm-opcion {
+  display: inline-flex; align-items: center; gap: 2mm;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.fm-circulo {
+  width: 3.8mm; height: 3.8mm;
+  border: 0.3mm solid #111; border-radius: 50%;
+  position: relative;
+}
+.fm-circulo.marcado::after {
+  content: ''; position: absolute; inset: 0.6mm;
+  border-radius: 50%; background: #1f3a8a;
+}
+
+/* Preguntas: texto, Sí/No, "Especifique: ____" */
+/* Ancho mínimo para alinear Sí / No; los textos largos lo empujan, como en el papel. */
+.fm-pregunta .fm-texto { min-width: 62mm; white-space: nowrap; }
+.fm-pregunta .fm-especifique { display: flex; flex: 1; align-items: flex-end; gap: 2mm; margin-left: 3mm; }
+.fm-pregunta.doble { flex-wrap: wrap; }
+.fm-pregunta .fm-segunda { display: flex; width: 100%; padding-left: 96mm; margin-top: 1.5mm; }
+
+/* Textos del pie */
+.fm-validez {
+  margin: 4.5mm 6mm 0;
+  text-align: center;
+  font-family: Arial, sans-serif; font-size: 8.6pt; letter-spacing: 0.2pt; line-height: 1.3;
+}
+.fm-declaracion {
+  margin: 2.5mm 0 0;
+  text-align: center;
+  font-family: Arial, sans-serif; font-size: 8.4pt; line-height: 1.3;
+}
+
+/* Firma, aclaración y fecha */
+.fm-firmas { display: flex; gap: 12mm; margin-top: 13mm; }
+.fm-firma { flex: 1; display: flex; flex-direction: column; align-items: stretch; gap: 1.6mm; text-align: center; }
+.fm-firma > span:last-child { font-family: Arial, sans-serif; font-size: 8.5pt; letter-spacing: 2.5pt; }
+.fm-firma .fm-linea { text-align: center; }
+
+@media print {
+  .fm-linea:focus { background: none; }
+  .fm-opcion { cursor: default; }
+}

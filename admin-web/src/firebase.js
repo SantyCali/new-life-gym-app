@@ -1,6 +1,8 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+} from 'firebase/firestore';
 
 // Mismo proyecto Firebase que usa la app mobile (new-life-app-f951c) — no es
 // un proyecto nuevo. La apiKey no es secreta (va embebida en cualquier
@@ -24,5 +26,22 @@ const firebaseConfig = {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db   = getFirestore(app);
+// Copia de los datos en el navegador (IndexedDB). Al reabrir o recargar el
+// panel, los listeners (el padrón de socios, los ingresos de hoy) le piden a
+// Firebase solo lo que cambió: si el panel estuvo cerrado menos de 30 min,
+// Firestore cobra solo esos documentos y no los 200+ de nuevo. Cuida el cupo
+// gratis de 50.000 lecturas por día. Funciona con varias pestañas abiertas.
+// Si el navegador no lo permite (modo incógnito viejo), sigue sin copia.
+function crearDb() {
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    });
+  } catch (error) {
+    console.warn('[admin-web] sin copia local de Firestore:', error);
+    return getFirestore(app);
+  }
+}
+
+export const db   = crearDb();
 export default app;

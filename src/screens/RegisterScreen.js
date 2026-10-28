@@ -246,6 +246,8 @@ export default function RegisterScreen({ navigation }) {
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="next"
+            autoComplete="email"
+            textContentType="username"
           />
           <Field
             label="Contraseña"
@@ -254,6 +256,9 @@ export default function RegisterScreen({ navigation }) {
             placeholder="Mínimo 6 caracteres"
             secureTextEntry={!showPassword}
             autoCapitalize="none"
+            // Cuenta nueva: acá sí está bien que el celular ofrezca guardarla.
+            autoComplete="new-password"
+            textContentType="newPassword"
             returnKeyType="next"
             rightSlot={
               <TouchableOpacity
@@ -275,6 +280,8 @@ export default function RegisterScreen({ navigation }) {
             placeholder="Repetí la contraseña"
             secureTextEntry={!showConfirm}
             autoCapitalize="none"
+            autoComplete="new-password"
+            textContentType="newPassword"
             returnKeyType="done"
             rightSlot={
               <TouchableOpacity

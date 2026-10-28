@@ -33,7 +33,7 @@ export async function descargarExcel({ rutina, nombreSocio }) {
   });
   ws.columns = [{ width: 30 }, { width: 7 }, { width: 8 }, { width: 7 }, { width: 12 }, { width: 10 }, { width: 38 }];
 
-  const [sello, h] = await Promise.all([imagen(wb, '/planilla/sello.png'), imagen(wb, '/planilla/h-cabecera.png')]);
+  const [sello, h] = await Promise.all([imagen(wb, '/planilla/logo.png'), imagen(wb, '/planilla/h-cabecera.png')]);
 
   let fila = 1;
   const texto = (celda, valor, estilo = {}) => {
@@ -87,7 +87,9 @@ export async function descargarExcel({ rutina, nombreSocio }) {
         const c = r.getCell(i + 1);
         c.value = v ?? '';
         const dato = i > 0 || f.libre;
-        c.font = { name: 'Arial Narrow', size: i === 6 ? 9 : 10, bold: dato, color: { argb: dato ? TINTA : NEGRO } };
+        // Números (día, orden, serie, repetición, carga) bien grandes, como en la planilla impresa.
+        const tam = i === 6 ? 10 : i >= 1 && i <= 5 ? 13 : 10;
+        c.font = { name: 'Arial Narrow', size: tam, bold: dato, color: { argb: dato ? TINTA : NEGRO } };
         c.alignment = { vertical: 'middle', horizontal: i === 0 || i === 6 ? 'left' : 'center', shrinkToFit: i === 6 };
         c.border = bordes;
       });

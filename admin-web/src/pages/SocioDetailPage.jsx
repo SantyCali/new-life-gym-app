@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
-  updateSocio, deleteSocio, setFechaVencimiento, separarNombre,
+  updateSocio, deleteSocio, setFechaVencimiento, separarNombre, cambiarDniSocio,
 } from '../services/sociosService';
 import { avisarGuardado, avisarError } from '../utils/avisos';
 import {
@@ -9,10 +9,12 @@ import {
 } from '../utils/fechas';
 import { useSocios } from '../context/SociosContext';
 import { ESTADOS, etiquetaEstado } from '../services/estadoCuota';
-import { getAllConvenios, createConvenio } from '../services/conveniosService';
+import {
+  getAllConvenios, createConvenio, updateConvenio, porcentajeDeConvenio, precioConDescuento,
+} from '../services/conveniosService';
 import { getUserByDni, combinarSocioConApp } from '../services/usersService';
 import {
-  getCatalogoPlanes, catalogoGuardado, getPlanesDeSocio, eliminarPlanAsignado, renovarCuota, planVigenteDe,
+  getCatalogoPlanes, catalogoGuardado, getPlanesDeSocio, eliminarPlanAsignado, renovarCuota, planVigenteDe, anotarPagoEnPlan,
 } from '../services/planesService';
 import {
   subscribeAsistenciasDeSocio, registrarAsistencia, calcularPasesRestantes,
@@ -27,7 +29,11 @@ import PhotoLightbox from '../components/PhotoLightbox';
 import Icon from '../components/Icon';
 import { Skeleton } from '../components/Skeleton';
 import { Field, formatDate } from './SociosPage';
-import { rutinaEsNueva, resumenEsNuevo } from '../utils/novedades';
+import { rutinaEsNueva, resumenEsNuevo, fichaEsNueva, pagosEsNuevo } from '../utils/novedades';
+import NuevoBadge from '../components/NuevoBadge';
+import AptoMedicoModal from '../components/AptoMedicoModal';
+import { estadoApto } from '../services/aptoMedicoService';
+import { registrarMovimiento, textoBalance, getPagos } from '../services/pagosService';
 
 const DOT_ESTADO = {
   aldia:    'bg-accent shadow-glowSoft',
@@ -49,6 +55,11 @@ export default function SocioDetailPage() {
   const [cuentaApp, setCuentaApp]   = useState(null);
   const [cargandoResto, setCargandoResto] = useState(true);
   const [showEdit, setShowEdit]     = useState(false);
+  const [showApto, setShowApto]     = useState(false);
+  // Cambiando el DNI: mientras se muda todo, la ficha del DNI viejo se borra;
+  // en vez de "No se encontró el socio" se ve esto, y al terminar se va al nuevo.
+  const [mudandoA, setMudandoA]     = useState(null);
+  const [showPago, setShowPago]     = useState(false);
   const [showPlanes, setShowPlanes] = useState(false);
   const [zoomFoto, setZoomFoto]     = useState(false);
   const [busy, setBusy]             = useState(false);
@@ -102,6 +113,16 @@ export default function SocioDetailPage() {
   const base  = socios.find((s) => s.dni === dni);
   const socio = base ? combinarSocioConApp(base, cuentaApp) : null;
 
+  if (mudandoA) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-24 text-center">
+        <span className="h-10 w-10 animate-spin rounded-full border-4 border-accent/25 border-t-accent" />
+        <p className="font-display text-sm font-bold text-text">Cambiando el DNI a {mudandoA}…</p>
+        <p className="text-xs text-textSecondary">Se mudan la ficha, planes, pagos, ingresos, rutina y la fila del Excel.</p>
+      </div>
+    );
+  }
+
   if (cargandoSocios || cargandoResto) return <SocioSkeleton />;
 
   if (!socio) {
@@ -118,6 +139,8 @@ export default function SocioDetailPage() {
   }
 
   const convenio       = convenios.find((c) => c.id === socio.convenioId);
+  // % de descuento del convenio (0 si no tiene): se aplica al precio del plan.
+  const descuento      = socio.tieneConvenio ? porcentajeDeConvenio(convenio) : 0;
   const planVigente    = planVigenteDe(planesHistorial);
   const pasesRestantes = calcularPasesRestantes(planVigente, asistencias);
   const estado         = etiquetaEstado(socio);
@@ -224,9 +247,10 @@ export default function SocioDetailPage() {
               <Icon name="check_circle" className="text-lg" />
               Registrar asistencia
             </button>
-            <button onClick={() => setShowRenovar(true)} className="btn-outline">
+            <button onClick={() => setShowRenovar(true)} className="btn-outline relative" title={pagosEsNuevo() ? 'Nuevo: con descuento del convenio y pago parcial (lo que no paga queda como deuda).' : undefined}>
               <Icon name="event_repeat" className="text-lg" />
               Renovar cuota
+              <NuevoBadge mostrar={pagosEsNuevo()} />
             </button>
             {/* Armar la rutina (la ve en su app) e imprimirla en la planilla. */}
             <button
@@ -275,10 +299,26 @@ export default function SocioDetailPage() {
                 </span>
               )}
               {planVigente ? (
-                <p className="kpi text-text">
-                  ${Number(planVigente.precio).toLocaleString('es-AR')}
-                  <span className="ml-1 text-xs font-normal text-textSecondary">/ plan</span>
-                </p>
+                descuento > 0 ? (
+                  // Con convenio: el precio ya con el descuento, y el de lista tachado.
+                  <div>
+                    <p className="kpi text-text">
+                      ${precioConDescuento(planVigente.precio, descuento).toLocaleString('es-AR')}
+                      <span className="ml-1 text-xs font-normal text-textSecondary">/ plan</span>
+                    </p>
+                    <p className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="num text-textTertiary line-through">${Number(planVigente.precio).toLocaleString('es-AR')}</span>
+                      <span className="rounded-full bg-cyan/15 px-2 py-0.5 font-display font-bold text-cyan">
+                        −{descuento.toLocaleString('es-AR')}% convenio{convenio?.nombre ? ` · ${convenio.nombre}` : ''}
+                      </span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="kpi text-text">
+                    ${Number(planVigente.precio).toLocaleString('es-AR')}
+                    <span className="ml-1 text-xs font-normal text-textSecondary">/ plan</span>
+                  </p>
+                )
               ) : (
                 <p className="font-display text-lg font-bold text-textTertiary">Sin plan asignado</p>
               )}
@@ -295,10 +335,13 @@ export default function SocioDetailPage() {
                 <p className="font-display text-[0.6875rem] font-bold uppercase tracking-caps text-textSecondary">
                   Balance
                 </p>
-                <p className={`num font-display text-sm font-bold ${socio.balance < 0 ? 'text-danger' : 'text-accent'}`}>
-                  ${Number(socio.balance ?? 0).toLocaleString('es-AR')}
-                  {!socio.balance && ' (sin deuda)'}
+                <p className={`num font-display text-sm font-bold ${textoBalance(socio.balance).debe ? 'text-danger' : 'text-accent'}`}>
+                  {textoBalance(socio.balance).texto}
                 </p>
+                <button onClick={() => setShowPago(true)} className="mt-1 inline-flex items-center font-display text-xs font-bold text-cyan hover:underline">
+                  {textoBalance(socio.balance).debe ? 'Cargar pago' : 'Pagos'}
+                  <NuevoBadge mostrar={pagosEsNuevo()} enLinea />
+                </button>
               </div>
               {pasesRestantes !== null && (
                 <div className="text-right">
@@ -311,9 +354,10 @@ export default function SocioDetailPage() {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button onClick={() => setShowRenovar(true)} className="btn-primary btn-sm">
+              <button onClick={() => setShowRenovar(true)} className="btn-primary btn-sm relative">
                 <Icon name="event_repeat" className="text-base" />
                 Renovar cuota
+                <NuevoBadge mostrar={pagosEsNuevo()} />
               </button>
               <button onClick={() => setShowPlanes(true)} className="flex items-center gap-1 font-display text-xs font-bold text-cyan transition-colors hover:text-cyanSoft">
                 Historial de planes
@@ -356,25 +400,46 @@ export default function SocioDetailPage() {
               </>
             )}
 
-            <div className="flex items-center justify-between rounded-lg bg-surfaceLowest p-2.5">
-              <div className="flex items-center gap-2.5">
-                <Icon
-                  name="health_and_safety"
-                  className={`text-lg ${socio.certificadoMedico ? 'text-accent' : 'text-danger'}`}
-                />
-                <div>
-                  <p className="font-display text-[0.6875rem] font-bold uppercase tracking-caps text-textSecondary">
-                    Apto médico
-                  </p>
-                  <p className={`font-display text-xs font-bold ${socio.certificadoMedico ? 'text-accent' : 'text-danger'}`}>
-                    {socio.certificadoMedico ? 'Presentado' : 'No presentado'}
-                  </p>
+            {/* Apto médico: el archivo se carga y se ve en su ventana (AptoMedicoModal). */}
+            {(() => {
+              const apto = estadoApto(socio);
+              const color = apto.id === 'vigente' || apto.id === 'presentado' ? 'text-accent'
+                : apto.id === 'porVencer' ? 'text-[#ff9f1a]' : 'text-danger';
+              return (
+                <div className="flex items-center justify-between rounded-lg bg-surfaceLowest p-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <Icon name="health_and_safety" className={`text-lg ${color}`} />
+                    <div>
+                      <p className="font-display text-[0.6875rem] font-bold uppercase tracking-caps text-textSecondary">
+                        Apto médico
+                      </p>
+                      <p className={`font-display text-xs font-bold ${color}`}>{apto.label}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowApto(true)} className="btn-outline btn-sm">
+                    {apto.id === 'falta' ? 'Cargar' : apto.id === 'vencido' ? 'Renovar' : 'Ver'}
+                  </button>
                 </div>
-              </div>
-              <button onClick={() => setShowEdit(true)} className="btn-outline btn-sm">
-                {socio.certificadoMedico ? 'Editar' : 'Cargar'}
-              </button>
-            </div>
+              );
+            })()}
+            {/* La ficha médica del gym, para imprimir y que la firme el socio. */}
+            <a
+              href={`/socios/${dni}/ficha-medica`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-outline btn-sm relative justify-center"
+              title={fichaEsNueva() ? 'Nuevo: la ficha médica del gym con los datos del socio, lista para imprimir y firmar.' : undefined}
+            >
+              <Icon name="print" className="text-base" /> Imprimir ficha médica
+              {fichaEsNueva() && (
+                <span className="pointer-events-none absolute -right-2 -top-2.5 flex">
+                  <span className="absolute inline-flex h-full w-full ping-suave rounded-full bg-cyan" />
+                  <span className="relative rounded-full bg-cyan px-1.5 py-0.5 font-display text-[0.625rem] font-extrabold uppercase tracking-caps text-onAccent shadow-lg">
+                    ¡Nuevo!
+                  </span>
+                </span>
+              )}
+            </a>
           </section>
         </div>
 
@@ -487,7 +552,7 @@ export default function SocioDetailPage() {
       </div>
 
       {showRenovar && (
-        <RenovarCuotaModal socio={socio} planVigente={planVigente} onClose={() => setShowRenovar(false)} onChanged={load} />
+        <RenovarCuotaModal socio={socio} planVigente={planVigente} descuento={descuento} onClose={() => setShowRenovar(false)} onChanged={load} />
       )}
 
       {zoomFoto && (
@@ -498,6 +563,12 @@ export default function SocioDetailPage() {
         />
       )}
 
+      {showPago && <PagosModal socio={socio} onClose={() => setShowPago(false)} />}
+
+      {showApto && (
+        <AptoMedicoModal socio={socio} onClose={() => setShowApto(false)} onSaved={load} />
+      )}
+
       {showEdit && (
         <EditSocioModal
           socio={socio}
@@ -505,7 +576,11 @@ export default function SocioDetailPage() {
           fotoApp={socio.fotoApp}
           onClose={() => setShowEdit(false)}
           onSaved={async () => { setShowEdit(false); await load(); }}
+          onEmpiezaCambioDni={(nuevo) => setMudandoA(nuevo)}
+          onDniCambiado={(nuevo) => { setShowEdit(false); setMudandoA(null); navigate(`/socios/${nuevo}`, { replace: true }); }}
+          onFallaCambioDni={() => setMudandoA(null)}
           onConvenioCreated={(c) => setConvenios((prev) => [...prev, c])}
+          onConvenioActualizado={(c) => setConvenios((prev) => prev.map((x) => (x.id === c.id ? { ...x, ...c } : x)))}
         />
       )}
 
@@ -672,7 +747,8 @@ function formatDateTime(ts) {
 // Renovar la cuota: el plan que se le carga y hasta cuándo, todo junto (ver
 // renovarCuota en planesService). Tocar un plan lo elige y corre la fecha
 // según lo que dura, igual que los atajos; la fecha se puede corregir a mano.
-function RenovarCuotaModal({ socio, planVigente, onClose, onChanged }) {
+// descuento: % del convenio del socio (0 si no tiene).
+function RenovarCuotaModal({ socio, planVigente, descuento = 0, onClose, onChanged }) {
   const hoy = hoySinHora();
   const actual = socio.fechaVencimiento?.toDate?.() ?? null;
   const vigente = !!actual && actual >= hoy;
@@ -688,6 +764,8 @@ function RenovarCuotaModal({ socio, planVigente, onClose, onChanged }) {
   const elegidoAMano = useRef(false);
   const [fecha, setFecha] = useState('');
   const [saving, setSaving] = useState(false);
+  // Lo que entrega ahora (null = paga el total). Pago parcial: queda debiendo.
+  const [pagaInput, setPagaInput] = useState(null);
 
   const base = desdeVenc && vigente ? new Date(actual) : hoy;
   const aplicar = (p, b = base) => (p.tipo === 'dias' ? sumarDias(b, p.n) : sumarMeses(b, p.n));
@@ -732,11 +810,22 @@ function RenovarCuotaModal({ socio, planVigente, onClose, onChanged }) {
   const desdeTxt = base.toLocaleDateString('es-AR');
   const hastaTxt = hasta ? hasta.toLocaleDateString('es-AR') : '—';
 
+  const aPagar = plan ? precioConDescuento(plan.precio, descuento) : 0;
+  const paga = pagaInput == null ? aPagar : Math.max(0, Number(String(pagaInput).replace(/\./g, '').replace(',', '.')) || 0);
+  const diferencia = paga - aPagar;
+
   async function handleGuardar() {
     if (!hasta) return;
     setSaving(true);
     try {
-      const { excel } = await renovarCuota(socio.dni, { plan, desde: base, hasta });
+      const { excel, entradaId } = await renovarCuota(socio.dni, { plan, desde: base, hasta });
+      if (plan) {
+        await anotarPagoEnPlan(socio.dni, entradaId, { cargo: aPagar, pago: paga });
+        await registrarMovimiento(socio.dni, {
+          cargo: aPagar, pago: paga, concepto: 'Renovación de cuota',
+          planNombre: plan.nombre, precioLista: Number(plan.precio) || 0, descuentoPct: descuento,
+        });
+      }
       avisarGuardado(plan
         ? `${plan.nombre} cargado hasta el ${hastaTxt}`
         : `Cuota renovada hasta el ${hastaTxt}`, excel);
@@ -840,12 +929,40 @@ function RenovarCuotaModal({ socio, planVigente, onClose, onChanged }) {
 
         <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 text-sm text-text">
           {plan
-            ? <>Se carga <strong>{plan.nombre}</strong> · ${Number(plan.precio).toLocaleString('es-AR')} · del <strong className="num">{desdeTxt}</strong> al <strong className="num">{hastaTxt}</strong>.</>
+            ? <>Se carga <strong>{plan.nombre}</strong> · {descuento > 0
+                ? <><span className="line-through opacity-60">${Number(plan.precio).toLocaleString('es-AR')}</span> <strong>${precioConDescuento(plan.precio, descuento).toLocaleString('es-AR')}</strong> (−{descuento.toLocaleString('es-AR')}% convenio)</>
+                : '$' + Number(plan.precio).toLocaleString('es-AR')} · del <strong className="num">{desdeTxt}</strong> al <strong className="num">{hastaTxt}</strong>.</>
             : <>Solo se cambia la fecha: vence el <strong className="num">{hastaTxt}</strong> (sin cargar plan).</>}
           {plan && planVigente && !desdeVenc && vigente && (
             <span className="mt-1 block text-xs text-textSecondary">El plan actual se corta hoy y pasa a este.</span>
           )}
         </div>
+
+        {/* Pago: lo que entrega ahora (pago parcial = queda debiendo) */}
+        {plan && (
+          <div className="space-y-2 rounded-lg bg-surfaceLowest p-3">
+            <div className="flex items-end gap-3">
+              <label className="block flex-1">
+                <span className="label">Paga ahora (a pagar: ${aPagar.toLocaleString('es-AR')})</span>
+                <input
+                  className="input num text-lg font-bold"
+                  inputMode="numeric"
+                  value={pagaInput ?? String(aPagar)}
+                  onChange={(e) => setPagaInput(e.target.value.replace(/[^0-9.,]/g, ''))}
+                />
+              </label>
+              <button type="button" onClick={() => setPagaInput(null)} className="btn-outline btn-sm mb-0.5">Total</button>
+              <button type="button" onClick={() => setPagaInput('0')} className="btn-ghost btn-sm mb-0.5">No paga</button>
+            </div>
+            <p className={`text-sm font-bold ${diferencia < 0 ? 'text-danger' : diferencia > 0 ? 'text-cyan' : 'text-accent'}`}>
+              {diferencia < 0
+                ? `Pago parcial: queda debiendo $${(-diferencia).toLocaleString('es-AR')}`
+                : diferencia > 0
+                  ? `Queda a favor $${diferencia.toLocaleString('es-AR')}`
+                  : 'Paga el total'}
+            </p>
+          </div>
+        )}
 
         <p className="text-xs text-textTertiary">
           Se actualiza en la app, en este panel y en el Excel, que es lo que consulta el control de acceso de la entrada.
@@ -864,7 +981,9 @@ function RenovarCuotaModal({ socio, planVigente, onClose, onChanged }) {
 
 const inputAAFechaSegura = (v) => { const f = inputAFecha(v); return f && !Number.isNaN(f.getTime()) ? f : null; };
 
-function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConvenioCreated }) {
+function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onEmpiezaCambioDni, onDniCambiado, onFallaCambioDni, onConvenioCreated, onConvenioActualizado }) {
+  // DNI: se puede corregir (ver cambiarDniSocio). Con la app vinculada no.
+  const [dniNuevo, setDniNuevo] = useState(socio.dni);
   // En Firestore y en el Excel el nombre va junto; acá se separa con la misma
   // regla que usa la planilla para que al guardar quede igual en los dos lados.
   const partes = separarNombre(socio.nombre);
@@ -896,19 +1015,44 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
     setFotoBase64(await fileToCompressedBase64(file));
   }
 
+  // % del convenio nuevo: el que escriban, o el del nombre ("descuento 10%").
+  const [nuevoPct, setNuevoPct] = useState('');
   async function handleCrearConvenio() {
     if (!nuevoConvenio.trim()) return;
-    const id = await createConvenio({ nombre: nuevoConvenio, descuentoPorcentaje: 0 });
-    onConvenioCreated({ id, nombre: nuevoConvenio.trim(), descuentoPorcentaje: 0, activo: true });
+    const pct = Number(String(nuevoPct).replace(',', '.')) || porcentajeDeConvenio({ nombre: nuevoConvenio });
+    const id = await createConvenio({ nombre: nuevoConvenio, descuentoPorcentaje: pct });
+    onConvenioCreated({ id, nombre: nuevoConvenio.trim(), descuentoPorcentaje: pct, activo: true });
     set('convenioId', id);
     setNuevoConvenio('');
+    setNuevoPct('');
+  }
+
+  // % del convenio elegido, para corregirlo (vale para todos los socios con ese convenio).
+  const convenioElegido = convenios.find((c) => c.id === form.convenioId);
+  const [pctElegido, setPctElegido] = useState(null);   // null = sin tocar
+  const pctMostrado = pctElegido ?? (convenioElegido ? String(porcentajeDeConvenio(convenioElegido)) : '');
+
+  async function guardarPctConvenio() {
+    if (pctElegido == null || !convenioElegido) return;
+    const pct = Math.min(100, Math.max(0, Number(String(pctElegido).replace(',', '.')) || 0));
+    if (pct === (Number(convenioElegido.descuentoPorcentaje) || 0)) return;
+    await updateConvenio(convenioElegido.id, { descuentoPorcentaje: pct });
+    onConvenioActualizado?.({ id: convenioElegido.id, descuentoPorcentaje: pct });
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setSaving(true);
     const { nombre, apellido, vencimiento, ...resto } = form;
+    const cambiaDni = dniNuevo.trim() && dniNuevo.trim() !== socio.dni;
+    if (cambiaDni && !confirm(`¿Cambiar el DNI de ${socio.dni} a ${dniNuevo.trim()}? Se mudan su ficha, planes, pagos, apto médico, ingresos al gym, rutina y la fila del Excel.`)) {
+      setSaving(false);
+      return;
+    }
     try {
+      // Primero se guardan los cambios en el DNI actual y después, si cambia el
+      // DNI, se muda todo (ya actualizado) al nuevo.
+      const dniFinal = cambiaDni ? dniNuevo.trim() : socio.dni;
       const { excel } = await updateSocio(socio.dni, {
         ...resto,
         nombre: `${nombre} ${apellido}`.trim(),
@@ -916,6 +1060,19 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
         convenioId: form.tieneConvenio ? (form.convenioId || null) : null,
         fotoBase64,
       });
+      if (form.tieneConvenio) await guardarPctConvenio().catch(() => {});
+      if (cambiaDni) {
+        onEmpiezaCambioDni?.(dniFinal);
+        try {
+          const r = await cambiarDniSocio(socio.dni, dniFinal);
+          avisarGuardado(`DNI cambiado a ${dniFinal}`, r.excel);
+          onDniCambiado?.(dniFinal);
+        } catch (error) {
+          onFallaCambioDni?.();
+          throw error;
+        }
+        return;
+      }
       avisarGuardado('Socio actualizado', excel);
       onSaved();
     } catch (error) {
@@ -949,6 +1106,20 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
           </div>
         </div>
 
+        <Field label="DNI">
+          <input
+            className="input num"
+            value={dniNuevo}
+            onChange={(e) => setDniNuevo(e.target.value.replace(/\D/g, ''))}
+            inputMode="numeric"
+            disabled={socio.tieneCuentaApp}
+            title={socio.tieneCuentaApp ? 'Tiene la app vinculada: el DNI lo cambia desde su cuenta' : undefined}
+          />
+          {dniNuevo.trim() !== socio.dni && (
+            <span className="mt-1 block text-xs text-[#ff9f1a]">Al guardar se cambia el DNI en todos lados (ficha, planes, pagos, ingresos, rutina y Excel).</span>
+          )}
+        </Field>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre">
             <input className="input" value={form.nombre} onChange={(e) => set('nombre', e.target.value)} required />
@@ -980,15 +1151,24 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
         </div>
 
         <div className="space-y-3 rounded-lg bg-surfaceLowest p-4">
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-textSecondary">
-            <input
-              type="checkbox"
-              checked={form.certificadoMedico}
-              onChange={(e) => set('certificadoMedico', e.target.checked)}
-              className="h-4 w-4 cursor-pointer rounded border-border accent-accent"
-            />
-            Certificado médico presentado
-          </label>
+          {/* Con el archivo cargado, el apto se maneja solo desde su ventana
+              (si no, se podía destildar acá y quedaba el archivo igual). */}
+          {socio.aptoVence ? (
+            <p className="flex items-center gap-2 text-sm text-textSecondary">
+              <Icon name="health_and_safety" className="text-base text-accent" />
+              El apto médico se carga y se cambia desde "Apto médico", en la ficha.
+            </p>
+          ) : (
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-textSecondary">
+              <input
+                type="checkbox"
+                checked={form.certificadoMedico}
+                onChange={(e) => set('certificadoMedico', e.target.checked)}
+                className="h-4 w-4 cursor-pointer rounded border-border accent-accent"
+              />
+              Certificado médico presentado (sin archivo)
+            </label>
+          )}
 
           <label className="flex cursor-pointer items-center gap-2 text-sm text-textSecondary">
             <input
@@ -1002,18 +1182,38 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
 
           {form.tieneConvenio && (
             <div className="space-y-2 pl-6">
-              <select className="input" value={form.convenioId} onChange={(e) => set('convenioId', e.target.value)}>
+              <select className="input" value={form.convenioId} onChange={(e) => { set('convenioId', e.target.value); setPctElegido(null); }}>
                 <option value="">Seleccionar convenio...</option>
                 {convenios.map((c) => (
                   <option key={c.id} value={c.id}>{c.nombre}</option>
                 ))}
               </select>
+              {convenioElegido && (
+                <label className="flex items-center gap-2 text-sm text-textSecondary">
+                  Descuento
+                  <input
+                    className="input w-20 text-center"
+                    inputMode="decimal"
+                    value={pctMostrado}
+                    onChange={(e) => setPctElegido(e.target.value.replace(/[^0-9.,]/g, ''))}
+                  />
+                  %
+                  <span className="text-xs text-textTertiary">(vale para todos los socios con este convenio)</span>
+                </label>
+              )}
               <div className="flex gap-2">
                 <input
                   className="input"
                   placeholder="Crear convenio nuevo..."
                   value={nuevoConvenio}
                   onChange={(e) => setNuevoConvenio(e.target.value)}
+                />
+                <input
+                  className="input w-20 shrink-0 text-center"
+                  placeholder="% desc."
+                  inputMode="decimal"
+                  value={nuevoPct}
+                  onChange={(e) => setNuevoPct(e.target.value.replace(/[^0-9.,]/g, ''))}
                 />
                 <button type="button" onClick={handleCrearConvenio} className="btn-outline shrink-0">
                   Agregar
@@ -1028,6 +1228,86 @@ function EditSocioModal({ socio, convenios, fotoApp, onClose, onSaved, onConveni
           <button type="submit" disabled={saving} className="btn-primary">
             {saving ? 'Guardando...' : 'Guardar cambios'}
           </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Cargar un pago (para ir cancelando la deuda) y ver los últimos movimientos.
+function PagosModal({ socio, onClose }) {
+  const [monto, setMonto] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const [lista, setLista] = useState(null);
+  const deuda = Math.max(0, -(Number(socio.balance) || 0));
+
+  useEffect(() => { getPagos(socio.dni).then(setLista).catch(() => setLista([])); }, [socio.dni]);
+
+  async function guardar(e) {
+    e.preventDefault();
+    const m = Number(String(monto).replace(/\./g, '').replace(',', '.')) || 0;
+    if (m <= 0) return;
+    setGuardando(true);
+    try {
+      await registrarMovimiento(socio.dni, { pago: m, concepto: deuda > 0 ? 'Pago de deuda' : 'Pago a cuenta' });
+      avisarGuardado(`Pago de $${m.toLocaleString('es-AR')} cargado`);
+      onClose();
+    } catch (error) {
+      avisarError('No se pudo cargar el pago', error);
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Modal title={`Pagos · ${socio.nombre}`} onClose={onClose}>
+      <form onSubmit={guardar} className="space-y-4">
+        <div className="rounded-lg bg-surfaceLowest p-3 text-sm">
+          <span className="text-textSecondary">Balance: </span>
+          <strong className={textoBalance(socio.balance).debe ? 'text-danger' : 'text-accent'}>{textoBalance(socio.balance).texto}</strong>
+        </div>
+        <div className="flex items-end gap-2">
+          <label className="block flex-1">
+            <span className="label">Monto que entrega</span>
+            <input className="input num text-lg font-bold" inputMode="numeric" autoFocus value={monto}
+              onChange={(e) => setMonto(e.target.value.replace(/[^0-9.,]/g, ''))} placeholder="0" />
+          </label>
+          {deuda > 0 && (
+            <button type="button" onClick={() => setMonto(String(deuda))} className="btn-outline btn-sm mb-0.5">Toda la deuda</button>
+          )}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-ghost">Cancelar</button>
+          <button type="submit" disabled={guardando} className="btn-primary">{guardando ? 'Guardando…' : 'Cargar pago'}</button>
+        </div>
+        <div>
+          <span className="label">Últimos movimientos</span>
+          {lista == null ? <p className="text-sm text-textTertiary">Cargando…</p>
+            : lista.length === 0 ? <p className="text-sm text-textTertiary">Todavía no hay pagos cargados.</p>
+            : (
+              <ul className="divide-y divide-border rounded-lg border border-border text-sm">
+                {lista.map((m) => (
+                  <li key={m.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0">
+                      <span className="block truncate text-text">{m.concepto || 'Pago'}{m.planNombre ? ` · ${m.planNombre}` : ''}</span>
+                      <span className="num text-xs text-textTertiary">{m.fecha?.toDate?.().toLocaleDateString('es-AR')}{m.descuentoPct ? ` · −${m.descuentoPct}% convenio` : ''}</span>
+                    </span>
+                    <span className="num shrink-0 text-right">
+                      {/^Anulado/.test(m.concepto ?? '') ? (
+                        // Cuando se volvió al plan anterior: se deshizo ese cobro.
+                        <span className="block text-xs font-bold text-textSecondary">Cobro anulado</span>
+                      ) : (
+                        <>
+                          {m.cargo > 0 && <span className="block text-xs text-textSecondary">Cuota ${Number(m.cargo).toLocaleString('es-AR')}</span>}
+                          <span className={`block font-bold ${m.pago > 0 ? 'text-accent' : 'text-danger'}`}>
+                            {m.pago > 0 ? `Pagó $${Number(m.pago).toLocaleString('es-AR')}` : 'No pagó'}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
         </div>
       </form>
     </Modal>

@@ -108,6 +108,10 @@ export default function LoginScreen({ navigation }) {
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="next"
+            // Usuario de la cuenta: el gestor de contraseñas lo junta con la
+            // contraseña guardada.
+            autoComplete="email"
+            textContentType="username"
           />
 
           <Field
@@ -118,6 +122,12 @@ export default function LoginScreen({ navigation }) {
             placeholder="Tu contraseña"
             secureTextEntry={!showPassword}
             autoCapitalize="none"
+            // Contraseña que YA existe. Sin esto, Android y iPhone creían que
+            // era una cuenta nueva y le ofrecían "crear una contraseña segura":
+            // si la aceptaba, se llenaba una contraseña inventada que no era la
+            // suya, no podía entrar y terminaba cambiándola cada vez.
+            autoComplete="current-password"
+            textContentType="password"
             returnKeyType="done"
             onSubmitEditing={handleLogin}
             rightSlot={

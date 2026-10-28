@@ -84,9 +84,13 @@ export default function ComoSumarPuntos() {
     transform: [{ translateY: Math.max(0, ALTO_INICIAL - visible.value) }],
   }));
 
-  const Fila = ({ izq, der }) => (
+  // nota: aclaración chiquita abajo (por ejemplo, "solo para subir de nivel").
+  const Fila = ({ izq, der, nota }) => (
     <View style={[st.fila, { borderBottomColor: colors.border }]}>
-      <Text style={[st.filaIzq, { color: colors.textSecondary }]}>{izq}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={[st.filaIzq, { color: colors.textSecondary }]}>{izq}</Text>
+        {!!nota && <Text style={[st.filaNota, { color: colors.textTertiary }]}>{nota}</Text>}
+      </View>
       <Text style={[st.filaDer, { color: colors.primary }]}>{der}</Text>
     </View>
   );
@@ -141,7 +145,8 @@ export default function ComoSumarPuntos() {
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingBottom: 8 }}>
               <Seccion icono="footsteps" titulo="Pasos (cada día)">
                 <Fila izq="Cada 1.000 pasos" der={`+${XP_PER_1K_STEPS}`} />
-                <Fila izq="Llegar a tu meta diaria" der={`+${XP_GOAL_BONUS}`} />
+                {/* Cada uno elige su meta: en los torneos no cuenta (ver puntosDelTorneo). */}
+                <Fila izq="Llegar a tu meta diaria" der={`+${XP_GOAL_BONUS}`} nota="Solo para subir de nivel, no cuenta en los torneos" />
                 {stepMilestones.map((m) => (
                   <Fila key={m.steps} izq={`Hito de ${fmt(m.steps)} pasos${m.isPremium ? ' ★' : ''}`} der={`+${m.xp}`} />
                 ))}
@@ -189,7 +194,8 @@ const st = StyleSheet.create({
   icono:          { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   titulo:         { fontSize: 15, fontWeight: '800' },
   fila:           { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
-  filaIzq:        { fontSize: 14, flex: 1 },
+  filaIzq:        { fontSize: 14 },
+  filaNota:       { fontSize: 11, marginTop: 2 },
   filaDer:        { fontSize: 14, fontWeight: '800' },
   pie:            { fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 4 },
 });

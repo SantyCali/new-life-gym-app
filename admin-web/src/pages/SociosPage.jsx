@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
+import NuevoBadge from '../components/NuevoBadge';
+import { pagosEsNuevo } from '../utils/novedades';
 import { ESTADOS, getEstadosStats, etiquetaEstado } from '../services/estadoCuota';
 import NuevoSocioModal from '../components/NuevoSocioModal';
 import Badge from '../components/Badge';
@@ -47,7 +49,8 @@ export default function SociosPage() {
   return (
     <div>
       <PageHeader title="Socios" description="Padrón completo del gimnasio y estado de cuota.">
-        <button onClick={() => setShowNuevo(true)} className="btn-primary">
+        <button onClick={() => setShowNuevo(true)} className="btn-primary relative" title={pagosEsNuevo() ? 'Nuevo: cargale el plan, el convenio y lo que paga (pago parcial).' : undefined}>
+          <NuevoBadge mostrar={pagosEsNuevo()} />
           <Icon name="person_add" className="text-base" />
           Nuevo socio
         </button>

@@ -11,6 +11,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { saveGymWeight } from '../services/progressService';
+import { todayDateString } from '../services/stepService';
+import { subscribeHechosDelDia, marcarHecho } from '../services/rutinaHechaService';
+import { colorSuperserie, VERDE_HECHO } from '../constants/superseries';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -112,6 +115,52 @@ export default function RutinaScreen({ navigation }) {
       return next;
     });
   }, [user?.uid]);
+
+  // Series hechas HOY en cada ejercicio: { [slotId]: [{ reps, peso }] }.
+  // Antes la ventana de series arrancaba de cero cada vez que se abría: si
+  // alguien hacía superseries (una serie de A, una de B, volvía a A) perdía
+  // en qué serie iba. Se guarda en el celular y al otro día arranca vacío.
+  const [seriesHoy, setSeriesHoy] = useState({});
+  const claveSeries = user?.uid ? `seriesHoy_${user.uid}` : null;
+  useEffect(() => {
+    if (!claveSeries) return;
+    AsyncStorage.getItem(claveSeries).then((v) => {
+      const g = v ? JSON.parse(v) : null;
+      setSeriesHoy(g?.fecha === todayDateString() ? (g.ejercicios ?? {}) : {});
+    }).catch(() => {});
+  }, [claveSeries]);
+  const guardarSeriesHoy = useCallback((cambiar) => {
+    setSeriesHoy((prev) => {
+      const next = cambiar(prev);
+      if (claveSeries) {
+        AsyncStorage.setItem(claveSeries, JSON.stringify({ fecha: todayDateString(), ejercicios: next })).catch(() => {});
+      }
+      return next;
+    });
+  }, [claveSeries]);
+  // Ejercicios marcados con el ✓ hoy (en Firestore: así los ve el entrenador).
+  const [hechos, setHechos] = useState({});
+  useEffect(() => {
+    if (!user?.uid) return;
+    return subscribeHechosDelDia(user.uid, todayDateString(), setHechos);
+  }, [user?.uid]);
+  const cambiarHecho = useCallback((slotId, hecho) => {
+    setHechos((prev) => {
+      const n = { ...prev };
+      if (hecho) n[slotId] = true; else delete n[slotId];
+      return n;
+    });
+    marcarHecho(user?.uid, todayDateString(), slotId, hecho);
+  }, [user?.uid]);
+
+  // total: series del ejercicio. Al completarlas, el ejercicio se marca solo.
+  const anotarSerie = useCallback((slotId, registro, total) => {
+    guardarSeriesHoy((prev) => ({ ...prev, [slotId]: [...(prev[slotId] ?? []), registro] }));
+    if (total && (seriesHoy[slotId]?.length ?? 0) + 1 >= total) cambiarHecho(slotId, true);
+  }, [guardarSeriesHoy, cambiarHecho, seriesHoy]);
+  const reiniciarSeries = useCallback((slotId) => {
+    guardarSeriesHoy((prev) => { const n = { ...prev }; delete n[slotId]; return n; });
+  }, [guardarSeriesHoy]);
 
   const exercises = useMemo(() => {
     const day = routine?.dias?.find(d => d.id === activeDayId);
@@ -320,21 +369,46 @@ export default function RutinaScreen({ navigation }) {
           </View>
         )}
 
+        {/* ── Rutina de hoy completa (todos con el ✓) ─────────────────────── */}
+        {exercises.length > 0 && exercises.every(e => hechos[e.id]) && (
+          <View style={[styles.completa, { backgroundColor: VERDE_HECHO + '1F', borderColor: VERDE_HECHO }]}>
+            <Ionicons name="checkmark-done-circle" size={26} color={VERDE_HECHO} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.completaTitulo, { color: VERDE_HECHO }]}>¡Rutina de hoy completa!</Text>
+              <Text style={[styles.completaSub, { color: colors.textSecondary }]}>Hiciste todos los ejercicios. ¡Bien ahí! 💪</Text>
+            </View>
+          </View>
+        )}
+
         {/* ── Exercise cards ──────────────────────────────────────────────── */}
         {exercises.map((ex, index) => {
           const gm = MUSCLE_GROUPS.find(g => g.id === ex.grupoMuscular);
+          // Superserie: si el que sigue es del mismo grupo, se unen con una línea.
+          const ssColor = colorSuperserie(ex.superserie);
+          const sigueJunto = ssColor && exercises[index + 1]?.superserie === ex.superserie;
           return (
-            <ExerciseCard
-              key={ex.id}
-              exercise={ex}
-              groupMeta={gm}
-              index={index}
-              colors={colors}
-              styles={styles}
-              savedWeight={savedWeights[ex.id]}
-              onPress={() => setSelectedExercise(ex)}
-              onWeightPress={() => setWeightModalId(ex.id)}
-            />
+            <View key={ex.id}>
+              <ExerciseCard
+                exercise={ex}
+                groupMeta={gm}
+                index={index}
+                colors={colors}
+                styles={styles}
+                savedWeight={savedWeights[ex.id]}
+                seriesHechas={(seriesHoy[ex.id] ?? []).length}
+                hecho={!!hechos[ex.id]}
+                onToggleHecho={() => cambiarHecho(ex.id, !hechos[ex.id])}
+                juntoAbajo={sigueJunto}
+                onPress={() => setSelectedExercise(ex)}
+                onWeightPress={() => setWeightModalId(ex.id)}
+              />
+              {sigueJunto && (
+                <View style={styles.ssConector}>
+                  <View style={[styles.ssLinea, { backgroundColor: ssColor }]} />
+                  <Text style={[styles.ssConectorTexto, { color: ssColor }]}>+ sin descanso</Text>
+                </View>
+              )}
+            </View>
           );
         })}
 
@@ -355,6 +429,9 @@ export default function RutinaScreen({ navigation }) {
           <SeriesLogModal
             exercise={modalEx}
             savedWeight={savedWeights[modalEx.id]}
+            hechas={seriesHoy[modalEx.id] ?? []}
+            onSerie={(registro) => anotarSerie(modalEx.id, registro, modalEx.series ?? 4)}
+            onReiniciar={() => reiniciarSeries(modalEx.id)}
             onWeightSave={(value) => saveWeight(modalEx.id, value, false, modalEx.exerciseId, modalEx.nombre)}
             onClose={() => setWeightModalId(null)}
             colors={colors}
@@ -377,7 +454,11 @@ function MetaItem({ icon, label, colors, styles }) {
 }
 
 // ── ExerciseCard ──────────────────────────────────────────────────────────────
-function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight, onPress, onWeightPress }) {
+function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight, seriesHechas = 0, hecho = false, onToggleHecho, juntoAbajo = false, onPress, onWeightPress }) {
+  // Superserie: color propio del grupo (misma letra = se hacen seguidos).
+  const ssColor = colorSuperserie(exercise.superserie);
+  // Hecho (✓): la tarjeta se pone verde.
+  const acento = hecho ? VERDE_HECHO : colors.primary;
   const fadeAnim  = useSharedValue(0);
   const scaleAnim = useSharedValue(0.94);
 
@@ -404,9 +485,22 @@ function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight,
   // solo "Ver Técnica" abre el video.
   return (
     <TouchableOpacity activeOpacity={0.97} onPress={onWeightPress}>
-    <Animated.View style={[styles.exCard, { borderColor: colors.border, backgroundColor: colors.surfaceContainer }, cardAnimStyle]}>
+    <Animated.View style={[
+      styles.exCard,
+      { borderColor: hecho ? VERDE_HECHO : colors.border, backgroundColor: colors.surfaceContainer },
+      hecho && { borderWidth: 1.5 },
+      ssColor && { borderLeftWidth: 4, borderLeftColor: ssColor },
+      juntoAbajo && { marginBottom: 0 },
+      cardAnimStyle,
+    ]}>
       {/* Etiqueta del músculo y número */}
-      <LinearGradient colors={[colors.primary + '1F', colors.primary + '00']} style={styles.exArriba}>
+      <LinearGradient colors={[acento + '1F', acento + '00']} style={styles.exArriba}>
+        {ssColor && (
+          <View style={[styles.ssCartel, { backgroundColor: ssColor + '26', borderColor: ssColor }]}>
+            <Ionicons name="link" size={12} color={ssColor} />
+            <Text style={[styles.ssCartelTexto, { color: ssColor }]}>{`SUPERSERIE ${exercise.superserie}`}</Text>
+          </View>
+        )}
         <View style={styles.exTagFila}>
           {groupMeta ? (
             <View style={[styles.exTag, { backgroundColor: colors.primary + '2E', borderColor: colors.primary + '55' }]}>
@@ -414,7 +508,16 @@ function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight,
               <Text style={[styles.exTagText, { color: colors.primary }]}>{groupMeta.label.toUpperCase()}</Text>
             </View>
           ) : <View />}
-          <Text style={styles.exNumero}>#{String(index + 1).padStart(2, '0')}</Text>
+          <View style={styles.exNumFila}>
+            {/* Series hechas hoy (quedan guardadas aunque cambie de ejercicio). */}
+            {seriesHechas > 0 && (
+              <View style={[styles.exHechas, { backgroundColor: colors.primary + '2E', borderColor: colors.primary + '66' }]}>
+                <Ionicons name={seriesHechas >= (exercise.series ?? 4) ? 'checkmark-done' : 'checkmark'} size={11} color={colors.primary} />
+                <Text style={[styles.exHechasText, { color: colors.primary }]}>{`${Math.min(seriesHechas, exercise.series ?? 4)}/${exercise.series ?? 4}`}</Text>
+              </View>
+            )}
+            <Text style={styles.exNumero}>#{String(index + 1).padStart(2, '0')}</Text>
+          </View>
         </View>
 
         {/* Imagen del ejercicio (la del dataset), con el nombre abajo */}
@@ -435,6 +538,17 @@ function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight,
             )}
           </View>
         </View>
+
+        {/* Nota del entrenador, justo abajo del nombre (igual que en el registro de series). */}
+        {!!exercise.observaciones?.trim() && (
+          <View style={[styles.exNota, { borderLeftColor: colors.primary, backgroundColor: colors.primary + '1F' }]}>
+            <View style={styles.exNotaHead}>
+              <Ionicons name="chatbubble-ellipses" size={12} color={colors.primary} />
+              <Text style={[styles.exNotaLabel, { color: colors.primary }]}>NOTA DEL ENTRENADOR</Text>
+            </View>
+            <Text style={[styles.exNotaTexto, { color: colors.text }]}>{exercise.observaciones.trim()}</Text>
+          </View>
+        )}
       </LinearGradient>
 
       {/* Series, reps, descanso, peso */}
@@ -462,10 +576,20 @@ function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight,
         </TouchableOpacity>
       </View>
 
-      {/* Ver Técnica */}
-      <View style={styles.exPie}>
+      {/* ✓ Hecho y Ver Técnica */}
+      <View style={[styles.exPie, styles.exPieFila]}>
         <TouchableOpacity
-          style={[styles.exTecnica, { backgroundColor: colors.primary + '1A', borderColor: colors.primary + '40' }]}
+          style={[styles.exTecnica, styles.exHechoBtn, hecho
+            ? { backgroundColor: VERDE_HECHO, borderColor: VERDE_HECHO }
+            : { backgroundColor: colors.surfaceContainerHigh, borderColor: colors.border }]}
+          onPress={onToggleHecho}
+          activeOpacity={0.82}
+        >
+          <Ionicons name={hecho ? 'checkmark-circle' : 'checkmark-circle-outline'} size={17} color={hecho ? '#000' : colors.textSecondary} />
+          <Text style={[styles.cardVideoBtnText, { color: hecho ? '#000' : colors.textSecondary }]}>{hecho ? 'Hecho' : 'Listo'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.exTecnica, { flex: 1, backgroundColor: colors.primary + '1A', borderColor: colors.primary + '40' }]}
           onPress={onPress}
           activeOpacity={0.82}
         >
@@ -481,13 +605,18 @@ function ExerciseCard({ exercise, groupMeta, index, colors, styles, savedWeight,
 // ── SeriesLogModal ────────────────────────────────────────────────────────────
 const SCREEN_H = Dimensions.get('window').height;
 
-function SeriesLogModal({ exercise, savedWeight, onWeightSave, onClose, colors }) {
+// hechas: las series que ya registró hoy en este ejercicio ([{ reps, peso }]).
+// Quedan guardadas en RutinaScreen, así puede ir y venir entre ejercicios
+// (superseries) sin perder en cuál iba.
+function SeriesLogModal({ exercise, savedWeight, hechas = [], onSerie, onReiniciar, onWeightSave, onClose, colors }) {
   const totalSeries  = exercise.series ?? 4;
   const targetReps   = Number(exercise.repeticiones) || 12;
   const neon         = colors.primary;
   const groupMeta    = MUSCLE_GROUPS.find(g => g.id === exercise.grupoMuscular);
+  const completo     = hechas.length >= totalSeries;
 
-  const [currentSeries, setCurrentSeries] = useState(1);
+  // La serie que toca ahora: la siguiente a las ya hechas.
+  const currentSeries = Math.min(hechas.length + 1, totalSeries);
   const [weight, setWeight] = useState(
     savedWeight?.value != null ? savedWeight.value : (exercise.carga ?? 0)
   );
@@ -539,20 +668,23 @@ function SeriesLogModal({ exercise, savedWeight, onWeightSave, onClose, colors }
   }, []);
 
   const handleSaveSeries = useCallback(() => {
+    if (completo) return;
     if (weight > 0) onWeightSave(weight);
-    if (currentSeries < totalSeries) {
-      setCurrentSeries(s => s + 1);
+    onSerie?.({ reps, peso: weight > 0 ? weight : null });
+    if (hechas.length + 1 < totalSeries) {
       setReps(targetReps);
     } else {
       slideAnim.value = withTiming(SCREEN_H, { duration: 280, easing: Easing.in(Easing.cubic) }, (finished) => {
         if (finished) runOnJS(onClose)();
       });
     }
-  }, [currentSeries, totalSeries, weight, targetReps, onWeightSave, onClose]);
+  }, [completo, hechas.length, totalSeries, weight, reps, targetReps, onWeightSave, onSerie, onClose]);
 
-  const hintText = currentSeries === 1
-    ? 'Listo para registrar tu primera serie.'
-    : `Serie ${currentSeries - 1} completada ✓  ¡Seguí así!`;
+  const hintText = completo
+    ? '¡Ejercicio completado hoy! ✓'
+    : hechas.length === 0
+      ? 'Listo para registrar tu primera serie.'
+      : `Serie ${hechas.length} completada ✓  ¡Seguí así!`;
 
   return (
     <Modal visible animationType="none" onRequestClose={dismiss} statusBarTranslucent transparent navigationBarTranslucent>
@@ -595,9 +727,19 @@ function SeriesLogModal({ exercise, savedWeight, onWeightSave, onClose, colors }
                 </Text>
               </View>
               <Text style={slSt.heroTitle}>{exercise.nombre}</Text>
-              <Text style={slSt.heroDesc}>
-                {exercise.observaciones ?? 'Controlá la técnica en cada repetición'}
-              </Text>
+              {/* La observación del entrenador, bien a la vista (antes era
+                  un texto gris chiquito que casi no se leía). */}
+              {exercise.observaciones?.trim() ? (
+                <View style={[slSt.nota, { borderLeftColor: neon, backgroundColor: neon + '26' }]}>
+                  <View style={slSt.notaHead}>
+                    <Ionicons name="chatbubble-ellipses" size={13} color={neon} />
+                    <Text style={[slSt.notaLabel, { color: neon }]}>NOTA DEL ENTRENADOR</Text>
+                  </View>
+                  <Text style={slSt.notaTexto}>{exercise.observaciones.trim()}</Text>
+                </View>
+              ) : (
+                <Text style={slSt.heroDesc}>Controlá la técnica en cada repetición</Text>
+              )}
             </View>
           </View>
 
@@ -627,25 +769,40 @@ function SeriesLogModal({ exercise, savedWeight, onWeightSave, onClose, colors }
 
               {/* Header */}
               <View style={slSt.cardHeader}>
-                <Text style={slSt.cardTitle}>REGISTRAR SERIE</Text>
+                <Text style={slSt.cardTitle}>{completo ? 'SERIES DE HOY' : 'REGISTRAR SERIE'}</Text>
                 <Text style={slSt.seriesCounter}>
-                  <Text style={{ color: neon }}>{currentSeries}</Text>
+                  <Text style={{ color: neon }}>{completo ? totalSeries : currentSeries}</Text>
                   {' / '}{totalSeries}
                 </Text>
               </View>
 
-              {/* Progress bar */}
+              {/* Progreso: hechas en color, la que toca ahora más clarita */}
               <View style={slSt.progressRow}>
                 {Array.from({ length: totalSeries }).map((_, i) => (
                   <View
                     key={i}
                     style={[
                       slSt.progressSeg,
-                      i < currentSeries && { backgroundColor: neon },
+                      i < hechas.length && { backgroundColor: neon },
+                      i === hechas.length && !completo && { backgroundColor: neon + '55' },
                     ]}
                   />
                 ))}
               </View>
+
+              {/* Las series que ya hizo hoy, para que vea dónde quedó */}
+              {hechas.length > 0 && (
+                <View style={slSt.hechasLista}>
+                  {hechas.map((h, i) => (
+                    <View key={i} style={slSt.hechaFila}>
+                      <Ionicons name="checkmark-circle" size={15} color={neon} />
+                      <Text style={slSt.hechaTexto}>
+                        {`Serie ${i + 1}: ${h.reps} reps${h.peso ? ` · ${h.peso} kg` : ''}`}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
 
               {/* Controls: Peso + Reps */}
               <View style={slSt.controlsRow}>
@@ -698,17 +855,34 @@ function SeriesLogModal({ exercise, savedWeight, onWeightSave, onClose, colors }
 
               </View>
 
-              {/* Save button */}
-              <TouchableOpacity
-                style={[slSt.saveBtn, { backgroundColor: neon }]}
-                onPress={handleSaveSeries}
-                activeOpacity={0.88}
-              >
-                <Ionicons name="checkmark" size={20} color="#000" />
-                <Text style={slSt.saveBtnText}>
-                  {currentSeries < totalSeries ? 'GUARDAR SERIE' : 'FINALIZAR'}
-                </Text>
-              </TouchableOpacity>
+              {/* Guardar serie, o (ya completo) cerrar / empezar de nuevo */}
+              {completo ? (
+                <>
+                  <TouchableOpacity
+                    style={[slSt.saveBtn, { backgroundColor: neon }]}
+                    onPress={dismiss}
+                    activeOpacity={0.88}
+                  >
+                    <Ionicons name="checkmark-done" size={20} color="#000" />
+                    <Text style={slSt.saveBtnText}>LISTO</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => onReiniciar?.()} style={slSt.reiniciarBtn} activeOpacity={0.7}>
+                    <Ionicons name="refresh" size={14} color="#888" />
+                    <Text style={slSt.reiniciarTexto}>Empezar de nuevo</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  style={[slSt.saveBtn, { backgroundColor: neon }]}
+                  onPress={handleSaveSeries}
+                  activeOpacity={0.88}
+                >
+                  <Ionicons name="checkmark" size={20} color="#000" />
+                  <Text style={slSt.saveBtnText}>
+                    {hechas.length + 1 < totalSeries ? 'GUARDAR SERIE' : 'FINALIZAR'}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <Text style={slSt.hintText}>{hintText}</Text>
             </View>
@@ -756,6 +930,13 @@ const slSt = StyleSheet.create({
   heroCategory: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.45)', letterSpacing: 2 },
   heroTitle: { fontSize: 30, fontWeight: '900', color: '#fff', letterSpacing: -0.4, marginBottom: 5 },
   heroDesc:  { fontSize: 13, color: 'rgba(255,255,255,0.4)', fontWeight: '500' },
+  nota: {
+    marginTop: 6, paddingVertical: 10, paddingHorizontal: 12,
+    borderRadius: 12, borderLeftWidth: 3,
+  },
+  notaHead:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  notaLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
+  notaTexto: { fontSize: 15, lineHeight: 21, color: '#fff', fontWeight: '600' },
 
   // Stats
   statsRow: {
@@ -830,6 +1011,11 @@ const slSt = StyleSheet.create({
   },
   saveBtnText: { fontSize: 14, fontWeight: '900', color: '#000', letterSpacing: 0.8 },
   hintText:    { fontSize: 11, color: '#444', textAlign: 'center', fontWeight: '500' },
+  hechasLista: { gap: 6, marginBottom: 14 },
+  hechaFila:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  hechaTexto:  { fontSize: 13, color: '#ccc', fontWeight: '600', fontVariant: ['tabular-nums'] },
+  reiniciarBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, marginTop: 4 },
+  reiniciarTexto: { fontSize: 12, color: '#888', fontWeight: '600' },
 });
 
 // ── ExerciseVideoModal ────────────────────────────────────────────────────────
@@ -991,6 +1177,9 @@ function makeStyles(colors) {
     exTag:       { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7, borderWidth: 1 },
     exTagText:   { fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
     exNumero:    { fontSize: 11, fontWeight: '700', color: colors.textTertiary, fontVariant: ['tabular-nums'] },
+    exNumFila:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    exHechas:    { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },
+    exHechasText: { fontSize: 11, fontWeight: '800', fontVariant: ['tabular-nums'] },
     exImagen:    { height: 170, borderRadius: 13, overflow: 'hidden', borderWidth: 1, backgroundColor: '#fff' },
     exNombreFila: { position: 'absolute', left: 12, right: 12, bottom: 10, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 },
     exNombre:    { flex: 1, fontSize: 17, fontWeight: '800', color: colors.text },
@@ -999,6 +1188,20 @@ function makeStyles(colors) {
     exGrilla:    { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, paddingVertical: 12 },
     exCelda:     { flex: 1, alignItems: 'center', borderRightWidth: 1 },
     exPie:       { padding: 10 },
+    exPieFila:   { flexDirection: 'row', gap: 8 },
+    exHechoBtn:  { paddingHorizontal: 16 },
+    ssCartel:    { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, borderWidth: 1, marginBottom: 8 },
+    ssCartelTexto: { fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+    ssConector:  { height: 30, flexDirection: 'row', alignItems: 'center', paddingLeft: 22 },
+    ssLinea:     { position: 'absolute', left: 22, top: 0, bottom: 0, width: 4, borderRadius: 2 },
+    ssConectorTexto: { marginLeft: 16, fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+    completa:    { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, borderWidth: 1.5, marginBottom: 16 },
+    completaTitulo: { fontSize: 16, fontWeight: '900' },
+    completaSub: { fontSize: 12, marginTop: 2 },
+    exNota:      { marginTop: 10, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 12, borderLeftWidth: 3 },
+    exNotaHead:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+    exNotaLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
+    exNotaTexto: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
     exTecnica:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, borderRadius: 13, borderWidth: 1 },
     dayTitle:     { fontSize: 23, fontWeight: '900', color: colors.text, letterSpacing: -0.5, marginBottom: 8 },
     dayMetaRow:   { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 },

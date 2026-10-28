@@ -235,6 +235,8 @@ export default function SettingsScreen({ navigation }) {
               onChangeText={setDeletePassword}
               autoCapitalize="none"
               autoCorrect={false}
+              autoComplete="current-password"
+              textContentType="password"
               editable={!deleting}
             />
             <View style={styles.modalActions}>

@@ -30,6 +30,7 @@ import Animated, {
   runOnJS,
   interpolate,
   Extrapolation,
+  FadeIn,
 } from 'react-native-reanimated';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import * as ImagePicker from 'expo-image-picker';
@@ -803,34 +804,21 @@ function weightDateLabel(dateStr) {
   return `${d} ${MONTH_SHORT[m-1]}`;
 }
 
+// Mes del historial de peso que se abre y se cierra al tocarlo. Antes se
+// medía el alto de los datos y se animaba esa altura: en Android la medida a
+// veces llegaba mal, el mes se abría y no se volvía a cerrar, y los datos
+// quedaban transparentes. Ahora los datos se muestran o no, con un fundido.
 function CollapsibleMonthGroup({ label, entries, defaultExpanded, onDelete, colors }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const heightRef    = React.useRef(defaultExpanded ? 1000 : 0);
-  const heightAnim   = useSharedValue(defaultExpanded ? 1000 : 0);
-  const opacityAnim  = useSharedValue(defaultExpanded ? 1 : 0);
   const chevronAnim  = useSharedValue(defaultExpanded ? 1 : 0);
 
-  const onContentLayout = React.useCallback((e) => {
-    const h = e.nativeEvent.layout.height;
-    if (h > 0) {
-      heightRef.current = h;
-      if (expanded) heightAnim.value = h; // ajusta sin animar al medir por primera vez
-    }
-  }, [expanded]);
-
   const toggle = React.useCallback(() => {
-    const next = !expanded;
-    setExpanded(next);
-    heightAnim.value  = withTiming(next ? heightRef.current : 0,  { duration: 300, easing: Easing.bezier(0.4, 0, 0.2, 1) });
-    opacityAnim.value = withTiming(next ? 1 : 0, { duration: 240 });
-    chevronAnim.value = withTiming(next ? 1 : 0, { duration: 280, easing: Easing.out(Easing.ease) });
-  }, [expanded]);
-
-  const containerStyle = useAnimatedStyle(() => ({
-    height: heightAnim.value,
-    opacity: opacityAnim.value,
-    overflow: 'hidden',
-  }));
+    setExpanded((prev) => {
+      const next = !prev;
+      chevronAnim.value = withTiming(next ? 1 : 0, { duration: 280, easing: Easing.out(Easing.ease) });
+      return next;
+    });
+  }, [chevronAnim]);
 
   const chevronStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${chevronAnim.value * 180}deg` }],
@@ -849,8 +837,8 @@ function CollapsibleMonthGroup({ label, entries, defaultExpanded, onDelete, colo
         </Animated.View>
       </TouchableOpacity>
 
-      <Animated.View style={containerStyle}>
-        <View onLayout={onContentLayout}>
+      {expanded && (
+        <Animated.View entering={FadeIn.duration(220)}>
           {entries.map((entry) => (
             <View key={entry.id ?? entry.date}
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.borderLight }}
@@ -866,8 +854,8 @@ function CollapsibleMonthGroup({ label, entries, defaultExpanded, onDelete, colo
               </TouchableOpacity>
             </View>
           ))}
-        </View>
-      </Animated.View>
+        </Animated.View>
+      )}
     </View>
   );
 }

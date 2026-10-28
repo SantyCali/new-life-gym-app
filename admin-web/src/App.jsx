@@ -15,6 +15,8 @@ import PlanesPage from './pages/PlanesPage';
 import RutinaSocioPage from './pages/RutinaSocioPage';
 import RutinasPage from './pages/RutinasPage';
 import RutinaImprimirPage from './pages/RutinaImprimirPage';
+import FichaMedicaPage from './pages/FichaMedicaPage';
+import MovimientosPage from './pages/MovimientosPage';
 
 export default function App() {
   return (
@@ -24,6 +26,9 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           {/* Hoja para imprimir: sin el menú del panel. */}
           <Route path="/socios/:dni/rutina/imprimir" element={<ProtectedRoute><RutinaImprimirPage /></ProtectedRoute>} />
+          {/* Ficha médica para imprimir: con los datos del socio, o en blanco. */}
+          <Route path="/socios/:dni/ficha-medica" element={<ProtectedRoute><FichaMedicaPage /></ProtectedRoute>} />
+          <Route path="/ficha-medica" element={<ProtectedRoute><FichaMedicaPage /></ProtectedRoute>} />
 
           <Route
             path="/"
@@ -45,6 +50,7 @@ export default function App() {
             <Route path="socios/:dni/rutina" element={<RutinaSocioPage />} />
             <Route path="planes" element={<PlanesPage />} />
             <Route path="rutinas" element={<RutinasPage />} />
+            <Route path="movimientos" element={<MovimientosPage />} />
             <Route path="en-sala" element={<EnSalaPage />} />
             <Route path="caja" element={<ComingSoon title="Caja" />} />
             <Route path="reportes" element={<ComingSoon title="Reportes" />} />

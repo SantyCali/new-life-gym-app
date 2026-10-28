@@ -1,4 +1,4 @@
-import { collection, collectionGroup, doc, getDoc, getDocs, query, where, limit } from 'firebase/firestore';
+import { collection, collectionGroup, doc, getDoc, getDocs, getDocsFromCache, query, where, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { cached } from './cache';
 
@@ -51,11 +51,32 @@ export async function getCuentasPorDni() {
   return cached('cuentasApp', 15 * 60 * 1000, leerCuentas);
 }
 
-async function leerCuentas() {
-  const [snapUsers, snapPrivados] = await Promise.all([
+// Las cuentas casi no cambian y son la lectura más cara del panel (fotos):
+// si se leyeron de Firebase hace menos de CUENTAS_FRESCO_MS, salen de la copia
+// del navegador (ver firebase.js) sin gastar lecturas. Si la copia está vacía
+// (otra compu, se borró el navegador), se leen de Firebase.
+const CUENTAS_FRESCO_MS = 60 * 60 * 1000;
+const CLAVE_CUENTAS = 'cuentasLeidasEn';
+
+async function leerDeFirebaseOCopia() {
+  let leidasEn = 0;
+  try { leidasEn = Number(localStorage.getItem(CLAVE_CUENTAS)) || 0; } catch {}
+  if (Date.now() - leidasEn < CUENTAS_FRESCO_MS) {
+    try {
+      const [u, p] = await Promise.all([getDocsFromCache(COL), getDocsFromCache(collectionGroup(db, 'privado'))]);
+      if (u.docs.length) return [u, p];
+    } catch {}
+  }
+  const r = await Promise.all([
     getDocs(COL),
     getDocs(collectionGroup(db, 'privado')).catch(() => ({ docs: [] })),
   ]);
+  try { localStorage.setItem(CLAVE_CUENTAS, String(Date.now())); } catch {}
+  return r;
+}
+
+async function leerCuentas() {
+  const [snapUsers, snapPrivados] = await leerDeFirebaseOCopia();
   const privados = {};
   snapPrivados.docs.forEach((d) => { privados[d.ref.parent.parent?.id] = d.data(); });
   const snap = { docs: snapUsers.docs.map((d) => ({ id: d.id, data: () => juntar(d.data(), privados[d.id]) })) };

@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
+import NuevoBadge from '../components/NuevoBadge';
+import { pagosEsNuevo } from '../utils/novedades';
 import useIngresosDeHoy from '../hooks/useIngresosDeHoy';
 import { getEstadosStats, venceHoy } from '../services/estadoCuota';
 import {
@@ -53,7 +55,8 @@ export default function DashboardPage() {
             <Icon name="card_membership" />
             Planes
           </Link>
-          <button onClick={() => navigate('/socios?nuevo=1')} className="btn-primary">
+          <button onClick={() => navigate('/socios?nuevo=1')} className="btn-primary relative">
+            <NuevoBadge mostrar={pagosEsNuevo()} />
             <Icon name="person_add" />
             Nuevo socio
           </button>

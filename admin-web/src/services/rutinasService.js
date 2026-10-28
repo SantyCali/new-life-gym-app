@@ -6,7 +6,7 @@
 //                   editadaPor, creadoEn, actualizadoEn, … }
 //   dias: [{ id, numero, nombre, ejercicios: [{ id, exerciseId, nombre,
 //            grupoMuscular, series, repeticiones, carga, descanso,
-//            observaciones, orden }] }]
+//            observaciones, superserie, orden }] }]
 // El panel agrega: socioDni, objetivos y observacion (los usa la planilla; la
 // app los ignora).
 //
@@ -68,6 +68,9 @@ export async function guardarRutina({ rutina, dni, uid, entrenadorUid }) {
       carga: e.carga === '' || e.carga == null || Number.isNaN(Number(e.carga)) ? null : Number(e.carga),
       descanso: Number(e.descanso) || 90,
       observaciones: (e.observaciones ?? '').trim(),
+      // Superserie: misma letra = se hacen seguidos (ver rutinas/superseries.js).
+      // Se guarda siempre, si no se borraba la que armó el entrenador en la app.
+      superserie: e.superserie || null,
       orden: j,
     })),
   }));
