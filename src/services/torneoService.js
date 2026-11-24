@@ -13,6 +13,7 @@ import { leerPrivado } from './perfilPrivadoService';
 import { XP_GYM_VISIT } from './gamificationService';
 import { awardXPAndCoins } from './gamificationService';
 import { xpPorPasos } from './stepRewardsService';
+import { guardarMisTrofeos, guardarCopasDelPodio } from './trofeosService';
 
 const DURACION_DIAS = 14;
 // Desde este día el bonus de la meta diaria no cuenta en los torneos (ver
@@ -407,6 +408,9 @@ export async function actualizarMisTorneos(uid) {
   const miNombre = `${userSnap.data().nombre ?? ''} ${userSnap.data().apellido ?? ''}`.trim();
   const { gymDni } = await leerPrivado(uid, userSnap.data()).catch(() => ({}));
   const ahora = Date.now();
+  // Copas de los torneos que ya terminaron: quedan en su perfil aunque después
+  // se borre el torneo (ver trofeosService).
+  guardarMisTrofeos(uid, torneos.docs.map((t) => ({ id: t.id, ...t.data() }))).catch(() => {});
   for (const t of torneos.docs) {
     const td = t.data();
     if (torneoCerrado(td, ahora)) continue;
@@ -453,8 +457,11 @@ export async function actualizarMisTorneos(uid) {
           }
         } catch {}
       }
-      // La foto de la fila es la de cuando lo sumaron: si cambió, se actualiza.
+      // La foto y el nombre de la fila son los de cuando lo sumaron: si
+      // cambiaron (Configuración → Nombre), se actualizan.
       if ((d.photoBase64 ?? null) !== photoBase64) upd.photoBase64 = photoBase64;
+      const { nombre = '', apellido = '' } = userSnap.data();
+      if ((d.nombre ?? '') !== nombre || (d.apellido ?? '') !== apellido) Object.assign(upd, { nombre, apellido });
       if (Object.keys(upd).length) await updateDoc(p.ref, upd);
     }
   }
@@ -529,10 +536,15 @@ export async function finalizarTorneo(torneoId, leaderboard) {
     const snap = await tx.get(ref);
     if (!snap.exists() || snap.data().activo === false) return null;
     const vencido = torneoTerminado({ fechaFin: snap.data().fechaFin });
-    tx.update(ref, { activo: false, finalizadoAt: serverTimestamp(), resultado: armarResultado(leaderboard) });
-    return { vencido };
+    const resultado = armarResultado(leaderboard);
+    tx.update(ref, { activo: false, finalizadoAt: serverTimestamp(), resultado });
+    const { nombre, soloPasos, fechaFin } = snap.data();
+    return { vencido, torneo: { id: torneoId, nombre, soloPasos, fechaFin, resultado } };
   });
   if (!cierre) return false;
+
+  // Las copas del podio, en el perfil de cada uno (quedan aunque se borre el torneo).
+  guardarCopasDelPodio(cierre.torneo).catch(() => {});
 
   // Cerrado a mano antes de la fecha: la foto de todos queda en este momento.
   if (!cierre.vencido) {
@@ -560,6 +572,11 @@ export async function finalizarTorneo(torneoId, leaderboard) {
 export { PRIZES };
 
 export async function eliminarTorneo(torneoId) {
+  // Si ya terminó, antes de borrarlo se aseguran las copas del podio (por si
+  // alguno todavía no abrió la app desde que cerró).
+  const snap = await getDoc(doc(db, 'torneos', torneoId)).catch(() => null);
+  const t = snap?.exists() ? snap.data() : null;
+  if (t?.activo === false && t.resultado) await guardarCopasDelPodio({ id: torneoId, ...t });
   await deleteDoc(doc(db, 'torneos', torneoId));
 }
 
@@ -594,8 +611,8 @@ export async function fetchParticipantStats(uids) {
     try {
       const snap = await getDoc(doc(db, 'users', uid));
       if (snap.exists()) {
-        const { xpTotal = 0, xpExtra = 0, gymVisitCount = 0, nivelJuego = 1, photoBase64 = null } = snap.data();
-        results[uid] = { xpTotal, xpExtra, gymVisitCount, nivelJuego, photoBase64 };
+        const { xpTotal = 0, xpExtra = 0, gymVisitCount = 0, nivelJuego = 1, photoBase64 = null, nombre, apellido } = snap.data();
+        results[uid] = { xpTotal, xpExtra, gymVisitCount, nivelJuego, photoBase64, nombre, apellido };
       }
     } catch {}
   }));

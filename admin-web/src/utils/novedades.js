@@ -29,3 +29,16 @@ const PAGOS_NUEVO_HASTA = new Date('2026-10-24T00:00:00-03:00').getTime();
 export function pagosEsNuevo() {
   return Date.now() < PAGOS_NUEVO_HASTA;
 }
+
+// Consumos (agua, Powerade, Gatorade…) y notita del socio: salieron el
+// 3/11/2026, se anuncian 2 días (3 y 4/11).
+const CONSUMOS_NUEVO_HASTA = new Date('2026-11-05T00:00:00-03:00').getTime();
+
+export function consumosEsNuevo() {
+  return Date.now() < CONSUMOS_NUEVO_HASTA;
+}
+
+// Cumpleaños de hoy en el panel de control: salió el 3/11/2026, mismos 2 días.
+export function cumplesEsNuevo() {
+  return Date.now() < CONSUMOS_NUEVO_HASTA;
+}

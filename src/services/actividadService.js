@@ -12,6 +12,7 @@ import { collection, doc, increment, onSnapshot, serverTimestamp, setDoc } from 
 import { db } from '../firebase';
 import { todayDateString } from './stepService';
 import { getRegistroPasos } from './nativeStepService';
+import { tomarMotivoSesionPerdida } from './respaldoSesion';
 
 function versionDeLaApp() {
   const v = Constants.expoConfig?.version ?? '';
@@ -54,7 +55,13 @@ export function registrarActividad(uid, { abrio = false, nombre = '', apellido =
     datos.ultimaApertura = serverTimestamp();
     datos.dias = { [todayDateString()]: increment(1) };
   }
-  const guardar = () => setDoc(doc(db, 'actividad', uid), datos, { merge: true }).catch(() => {});
+  // Si al arrancar Firebase le había borrado la sesión (ver respaldoSesion),
+  // el motivo se sube una vez, para encontrar la causa.
+  const guardar = async () => {
+    const perdida = abrio ? await tomarMotivoSesionPerdida() : null;
+    if (perdida) datos.sesionPerdida = { ...perdida, subidoEn: serverTimestamp() };
+    return setDoc(doc(db, 'actividad', uid), datos, { merge: true }).catch(() => {});
+  };
   // Android: al abrir, también el registro del contador de pasos (cuándo se
   // paró, quién lo revivió, si la batería tiene restricciones). Así se puede
   // ver por qué a alguien no le contó sin tener su celular.

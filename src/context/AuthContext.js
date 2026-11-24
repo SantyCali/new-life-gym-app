@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../firebase';
 import { firebaseConfig } from '../firebase/firebaseConfig';
 import { darSesionAlServicio, sacarSesionAlServicio } from '../services/nativeStepService';
+import { respaldarSesion, borrarRespaldoSesion, recuperarSesion } from '../services/respaldoSesion';
 
 const SESSION_KEY = 'nlg_session_active';
 import {
@@ -73,16 +74,19 @@ export function AuthProvider({ children }) {
         isFirstAuthRef.current = false;
         setUser(firebaseUser);
         setInitializing(false);
+        // Copia de la sesión, por si Firebase la borra al arrancar (ver respaldoSesion).
+        setTimeout(() => respaldarSesion(firebaseUser.uid), 1500);
       } else {
-        // Firebase dice null — si es el primer evento y había sesión guardada,
-        // esperar 2 s para que el SDK termine de refrescar el token (error de red transitorio).
-        if (isFirstAuthRef.current) {
-          isFirstAuthRef.current = false;
-          const hadSession = await AsyncStorage.getItem(SESSION_KEY).catch(() => null);
-          if (hadSession) {
-            await new Promise(r => setTimeout(r, 800));
-            if (auth.currentUser) return; // el SDK restauró la sesión; onAuthStateChanged va a volver a disparar
-          }
+        // Firebase dice null sin que la persona haya cerrado sesión (el botón
+        // borra SESSION_KEY antes): primero se espera un poco por si el SDK
+        // todavía la está restaurando, y si no, se recupera con el respaldo.
+        isFirstAuthRef.current = false;
+        const hadSession = await AsyncStorage.getItem(SESSION_KEY).catch(() => null);
+        if (hadSession) {
+          await new Promise(r => setTimeout(r, 800));
+          if (auth.currentUser) return; // el SDK restauró la sesión; onAuthStateChanged va a volver a disparar
+          // Se vuelve a poner la sesión y se recarga la app: no mostrar el login.
+          if (await recuperarSesion()) return;
         }
         AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
         setIsTrainer(false);
@@ -125,6 +129,7 @@ export function AuthProvider({ children }) {
     setAuthLoading(true);
     try {
       await AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+      await borrarRespaldoSesion();
       await sacarSesionAlServicio();
       await logoutService();
     } catch (error) {
@@ -141,6 +146,7 @@ export function AuthProvider({ children }) {
     try {
       await deleteAccountService(password);
       await AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+      await borrarRespaldoSesion();
     } catch (error) {
       setAuthError(error.message);
       throw error;

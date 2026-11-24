@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useSocios } from '../context/SociosContext';
 import NuevoBadge from '../components/NuevoBadge';
 import { pagosEsNuevo } from '../utils/novedades';
+import { useCumpleanos, BotonCumpleanos, CumpleanosDeHoy } from '../components/Cumpleanos';
 import useIngresosDeHoy from '../hooks/useIngresosDeHoy';
 import { getEstadosStats, venceHoy } from '../services/estadoCuota';
 import {
@@ -20,6 +21,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { socios, loading } = useSocios();
   const { ingresos, ahora, actualizadoEn } = useIngresosDeHoy();
+  const cumples = useCumpleanos(socios);
 
   const stats     = useMemo(() => (loading ? null : getEstadosStats(socios)), [socios, loading]);
   const porVencer = useMemo(() => ordenar(socios, 'proximo'), [socios]);
@@ -51,6 +53,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <BotonCumpleanos cumples={cumples} />
           <Link to="/planes" className="btn-outline">
             <Icon name="card_membership" />
             Planes
@@ -91,6 +94,8 @@ export default function DashboardPage() {
           pie={ingresos ? `${ingresos.length} ingresos en el día` : null}
         />
       </div>
+
+      <CumpleanosDeHoy cumples={cumples} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <SocioList

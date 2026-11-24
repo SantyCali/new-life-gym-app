@@ -34,6 +34,9 @@ import NuevoBadge from '../components/NuevoBadge';
 import AptoMedicoModal from '../components/AptoMedicoModal';
 import { estadoApto } from '../services/aptoMedicoService';
 import { registrarMovimiento, textoBalance, getPagos } from '../services/pagosService';
+import ConsumosCard from '../components/ConsumosCard';
+import GlobosCumple from '../components/GlobosCumple';
+import { esCumpleHoy } from '../components/Cumpleanos';
 
 const DOT_ESTADO = {
   aldia:    'bg-accent shadow-glowSoft',
@@ -176,8 +179,12 @@ export default function SocioDetailPage() {
     }
   }
 
+  // Cumple hoy (fecha de nacimiento de su cuenta de la app): globos al entrar.
+  const cumpleHoy = esCumpleHoy(cuentaApp?.fechaNacimiento);
+
   return (
     <div className="flex flex-col">
+      {cumpleHoy && <GlobosCumple key={dni} />}
       <nav className="flex items-center gap-2 pb-4 text-sm">
         <Link to="/socios" className="flex items-center gap-1 text-textSecondary transition-colors hover:text-text">
           <Icon name="arrow_back" className="text-base" />
@@ -226,6 +233,11 @@ export default function SocioDetailPage() {
                   {socio.nombre} {socio.apellido}
                 </h1>
                 <Badge variant={estado.variant}>{estado.label}</Badge>
+                {cumpleHoy && (
+                  <span className="rounded-full bg-[#F472B6]/15 px-2.5 py-0.5 font-display text-xs font-bold text-[#F472B6] ring-1 ring-[#F472B6]/40">
+                    🎂 ¡Cumple hoy!
+                  </span>
+                )}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-textSecondary">
                 <span className="num">DNI {socio.dni}</span>
@@ -365,6 +377,8 @@ export default function SocioDetailPage() {
               </button>
             </div>
           </section>
+
+          <ConsumosCard socio={socio} />
 
           <section className="card flex flex-col gap-3 p-5">
             <span className="font-display text-[0.6875rem] font-bold uppercase tracking-caps text-textSecondary">
@@ -1297,9 +1311,9 @@ function PagosModal({ socio, onClose }) {
                         <span className="block text-xs font-bold text-textSecondary">Cobro anulado</span>
                       ) : (
                         <>
-                          {m.cargo > 0 && <span className="block text-xs text-textSecondary">Cuota ${Number(m.cargo).toLocaleString('es-AR')}</span>}
+                          {m.cargo > 0 && <span className="block text-xs text-textSecondary">{m.tipo === 'consumo' ? 'Consumo' : 'Cuota'} ${Number(m.cargo).toLocaleString('es-AR')}</span>}
                           <span className={`block font-bold ${m.pago > 0 ? 'text-accent' : 'text-danger'}`}>
-                            {m.pago > 0 ? `Pagó $${Number(m.pago).toLocaleString('es-AR')}` : 'No pagó'}
+                            {m.pago > 0 ? `Pagó $${Number(m.pago).toLocaleString('es-AR')}` : m.tipo === 'consumo' ? 'Lo debe' : 'No pagó'}
                           </span>
                         </>
                       )}

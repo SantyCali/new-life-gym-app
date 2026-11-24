@@ -223,8 +223,10 @@ export async function cambiarDniSocio(viejo, nuevo) {
 
 export async function deleteSocio(dni) {
   const id = dni.trim();
-  // El apto médico vive aparte (ver aptoMedicoService): se borra con el socio.
+  // El apto médico y la notita viven aparte (ver aptoMedicoService y
+  // consumosService): se borran con el socio.
   await deleteDoc(doc(db, 'socios', id, 'documentos', 'aptoMedico')).catch(() => {});
+  await deleteDoc(doc(db, 'socios', id, 'documentos', 'nota')).catch(() => {});
   await deleteDoc(doc(db, 'socios', id));
   const excel = await syncToSheet({ action: 'delete', dni: id });
   return { excel };

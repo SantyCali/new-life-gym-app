@@ -191,3 +191,27 @@
   50%      { opacity: 1; }
 }
 .brillo { animation: brillo 1.3s ease-in-out infinite; }
+
+/* Cumpleaños (ficha del socio que cumple hoy): globos que suben meciéndose,
+   como en Twitter, y papelitos que caen. Ver components/GlobosCumple. */
+@keyframes globo-sube {
+  0%   { transform: translateY(0); opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(calc(-100vh - 260px)); opacity: 0.9; }
+}
+@keyframes globo-mece {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  25%      { transform: translateX(var(--vaiven)) rotate(6deg); }
+  75%      { transform: translateX(calc(var(--vaiven) * -1)) rotate(-6deg); }
+}
+@keyframes papelito-cae {
+  0%   { transform: translateY(-20px) rotate(0deg); }
+  100% { transform: translateY(var(--caida, calc(100vh + 40px))) rotate(var(--vueltas)); }
+}
+.globo-sube   { animation: globo-sube var(--dura) cubic-bezier(0.25, 0.6, 0.45, 1) var(--espera) both; }
+.globo-mece   { animation: globo-mece 2.2s ease-in-out infinite; }
+/* Los papelitos siguen cayendo mientras se está en la página. */
+.papelito-cae { animation: papelito-cae var(--dura) linear var(--espera) infinite backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .globo-sube, .globo-mece, .papelito-cae { animation: none; display: none; }
+}

@@ -146,8 +146,15 @@ export default function TorneoDetailScreen({ route, navigation }) {
         const current = stats[p.uid] ?? {};
         const { xpGanado, gymGanado } = puntosDeFila(torneo, p, current, terminado);
         const nivel     = current.nivelJuego ?? 1;
-        // Foto actual del perfil (la de la fila es la de cuando lo sumaron).
-        return { ...p, photoBase64: current.photoBase64 ?? p.photoBase64, xpGanado, gymGanado, nivel, actual: current };
+        // Foto y nombre actuales del perfil (los de la fila son los de cuando
+        // lo sumaron; el nombre se puede cambiar en Configuración).
+        return {
+          ...p,
+          photoBase64: current.photoBase64 ?? p.photoBase64,
+          nombre: current.nombre ?? p.nombre,
+          apellido: current.apellido ?? p.apellido,
+          xpGanado, gymGanado, nivel, actual: current,
+        };
       })
       .sort((a, b) => b.xpGanado - a.xpGanado);
   }, [participantes, stats, terminado, torneo]);

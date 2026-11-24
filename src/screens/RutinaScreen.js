@@ -2,19 +2,21 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Image, Modal, Pressable, Dimensions,
-  TextInput,
+  TextInput, AppState,
 } from 'react-native';
 import { useEspacioBarra } from '../navigation/PremiumTabBar';
 import Animated, {
   useSharedValue, useAnimatedStyle,
   withSpring, withTiming, withDelay, runOnJS, Easing,
 } from 'react-native-reanimated';
+import useEntradaPantalla from '../hooks/useEntradaPantalla';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { saveGymWeight } from '../services/progressService';
 import { todayDateString } from '../services/stepService';
 import { subscribeHechosDelDia, marcarHecho } from '../services/rutinaHechaService';
 import { colorSuperserie, VERDE_HECHO } from '../constants/superseries';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import PantallaSegura from '../components/ui/PantallaSegura';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
@@ -25,6 +27,7 @@ import { MUSCLE_GROUPS, EXERCISE_BY_ID } from '../constants/exercises';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { getExerciseImage, getExerciseGif } from '../constants/exerciseMedia';
 import useUserProfile from '../hooks/useUserProfile';
+import useAccesoGym, { esSoloPodometro } from '../hooks/useAccesoGym';
 
 // Brillo suave del color de acento detrás de la pantalla (arriba a la derecha
 // y a la izquierda). Sale del tema: cambia con el color y con claro/oscuro.
@@ -56,6 +59,10 @@ export default function RutinaScreen({ navigation }) {
   const { profile } = useUserProfile();
   const insets = useSafeAreaInsets();
   const fondo = <FondoAmbiente color={colors.primary} fuerte={isDark} />;
+  // La rutina es para los socios con la cuota al día: si no, un cartel en vez
+  // de la rutina (ver useAccesoGym).
+  const acceso = useAccesoGym();
+  const [reintentando, setReintentando] = useState(false);
 
   // El alumno se arma o edita su rutina (también la que le armó el entrenador)
   // con el mismo editor que usan los entrenadores.
@@ -65,15 +72,14 @@ export default function RutinaScreen({ navigation }) {
   });
 
   const [routine, setRoutine]                   = useState(undefined);
-  const [activeDayId, setDayId]                 = useState(null);
+  const [diaElegido, setDayId]                  = useState(null);
   const [selectedExercise, setSelectedExercise] = useState(null);
   const [weightModalId, setWeightModalId]       = useState(null); // exercise slot id | null
   const [savedWeights, setSavedWeights]         = useState({});
 
-  const headerOpacity = useSharedValue(0);
-  const headerFadeStyle = useAnimatedStyle(() => ({ opacity: headerOpacity.value }));
-  const screenOpacity = useSharedValue(0);
-  const screenStyle   = useAnimatedStyle(() => ({ flex: 1, opacity: screenOpacity.value }));
+  // Entrada al cambiar de pestaña (arranca visible: ver useEntradaPantalla).
+  const headerFadeStyle = null;
+  const screenStyle = useEntradaPantalla();
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -81,21 +87,19 @@ export default function RutinaScreen({ navigation }) {
     return unsub;
   }, [user?.uid]);
 
-  // Día inicial según la visita al gym. Si el día elegido no está en la rutina
-  // (se cambió de rutina), se vuelve a elegir: antes quedaba "Este día no tiene
-  // ejercicios" con ningún día marcado.
-  useEffect(() => {
-    if (!routine?.dias?.length) return;
-    if (activeDayId && routine.dias.some((d) => d.id === activeDayId)) return;
+  // Día que se muestra: el que tocó, o si no (o si ya no está en la rutina
+  // porque se cambió de rutina) el que toca según la visita al gym. Se calcula
+  // en el momento: antes se elegía un instante después de que llegaba la
+  // rutina, y la primera vez se veía "Este día no tiene ejercicios" con
+  // ningún día marcado y después saltaba a la rutina.
+  const activeDayId = useMemo(() => {
+    const dias = routine?.dias ?? [];
+    if (!dias.length) return null;
+    if (diaElegido && dias.some((d) => d.id === diaElegido)) return diaElegido;
     const storedIdx = profile?.gymRoutineDayIndex ?? 0;
-    const safeIdx   = Math.min(Math.max(0, storedIdx), routine.dias.length - 1);
-    setDayId(routine.dias[safeIdx]?.id ?? null);
-  }, [routine, profile?.gymRoutineDayIndex]);
-
-  useEffect(() => {
-    screenOpacity.value = withTiming(1, { duration: 280 });
-    headerOpacity.value = withTiming(1, { duration: 700 });
-  }, []);
+    const safeIdx   = Math.min(Math.max(0, storedIdx), dias.length - 1);
+    return dias[safeIdx]?.id ?? null;
+  }, [routine, diaElegido, profile?.gymRoutineDayIndex]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -116,42 +120,59 @@ export default function RutinaScreen({ navigation }) {
     });
   }, [user?.uid]);
 
+  // El día de hoy. La pantalla queda abierta de un día para el otro (el
+  // celular no la cierra): al volver a la app o pasada la medianoche se
+  // actualiza, y con él arrancan de cero las series y los ✓ del día.
+  const [hoy, setHoy] = useState(todayDateString);
+  useEffect(() => {
+    const revisar = () => setHoy(todayDateString());
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') revisar(); });
+    const t = setInterval(revisar, 60 * 1000);
+    return () => { sub.remove(); clearInterval(t); };
+  }, []);
+
   // Series hechas HOY en cada ejercicio: { [slotId]: [{ reps, peso }] }.
   // Antes la ventana de series arrancaba de cero cada vez que se abría: si
   // alguien hacía superseries (una serie de A, una de B, volvía a A) perdía
-  // en qué serie iba. Se guarda en el celular y al otro día arranca vacío.
-  const [seriesHoy, setSeriesHoy] = useState({});
+  // en qué serie iba. Se guarda en el celular con su fecha; las de otro día
+  // no cuentan (antes quedaban en memoria y se volvían a guardar como de hoy).
+  const [seriesGuardadas, setSeriesGuardadas] = useState({ fecha: null, ejercicios: {} });
+  const seriesHoy = useMemo(
+    () => (seriesGuardadas.fecha === hoy ? seriesGuardadas.ejercicios : {}),
+    [seriesGuardadas, hoy],
+  );
   const claveSeries = user?.uid ? `seriesHoy_${user.uid}` : null;
   useEffect(() => {
     if (!claveSeries) return;
     AsyncStorage.getItem(claveSeries).then((v) => {
       const g = v ? JSON.parse(v) : null;
-      setSeriesHoy(g?.fecha === todayDateString() ? (g.ejercicios ?? {}) : {});
+      if (g?.fecha === hoy) setSeriesGuardadas({ fecha: hoy, ejercicios: g.ejercicios ?? {} });
     }).catch(() => {});
-  }, [claveSeries]);
+  }, [claveSeries, hoy]);
   const guardarSeriesHoy = useCallback((cambiar) => {
-    setSeriesHoy((prev) => {
-      const next = cambiar(prev);
+    setSeriesGuardadas((prev) => {
+      const next = cambiar(prev.fecha === hoy ? prev.ejercicios : {});
       if (claveSeries) {
-        AsyncStorage.setItem(claveSeries, JSON.stringify({ fecha: todayDateString(), ejercicios: next })).catch(() => {});
+        AsyncStorage.setItem(claveSeries, JSON.stringify({ fecha: hoy, ejercicios: next })).catch(() => {});
       }
-      return next;
+      return { fecha: hoy, ejercicios: next };
     });
-  }, [claveSeries]);
+  }, [claveSeries, hoy]);
   // Ejercicios marcados con el ✓ hoy (en Firestore: así los ve el entrenador).
   const [hechos, setHechos] = useState({});
   useEffect(() => {
     if (!user?.uid) return;
-    return subscribeHechosDelDia(user.uid, todayDateString(), setHechos);
-  }, [user?.uid]);
+    setHechos({});
+    return subscribeHechosDelDia(user.uid, hoy, setHechos);
+  }, [user?.uid, hoy]);
   const cambiarHecho = useCallback((slotId, hecho) => {
     setHechos((prev) => {
       const n = { ...prev };
       if (hecho) n[slotId] = true; else delete n[slotId];
       return n;
     });
-    marcarHecho(user?.uid, todayDateString(), slotId, hecho);
-  }, [user?.uid]);
+    marcarHecho(user?.uid, hoy, slotId, hecho);
+  }, [user?.uid, hoy]);
 
   // total: series del ejercicio. Al completarlas, el ejercicio se marca solo.
   const anotarSerie = useCallback((slotId, registro, total) => {
@@ -193,16 +214,60 @@ export default function RutinaScreen({ navigation }) {
     ? MUSCLE_GROUPS.find(g => g.id === selectedExercise.grupoMuscular)
     : null;
 
-  // ── Loading ──────────────────────────────────────────────────────────────────
-  if (routine === undefined) {
+  // ── No es socio del gym ──────────────────────────────────────────────────────
+  if (esSoloPodometro(acceso.estado)) {
+    const vencida = acceso.estado === 'vencida';
+    const fechaVence = acceso.vence?.toDate?.()?.toLocaleDateString('es-AR', { day: 'numeric', month: 'long' });
     return (
       <Animated.View style={screenStyle}>
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <PantallaSegura style={styles.container}>
+        {fondo}
+        <Animated.View style={[styles.header, headerFadeStyle]}>
+          <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>Mi Rutina</Text>
+        </Animated.View>
+        <View style={styles.emptyWrap}>
+          <View style={[styles.emptyIconWrap, { backgroundColor: colors.primaryDim12 }]}>
+            <Ionicons name="lock-closed-outline" size={42} color={colors.primary} />
+          </View>
+          <Text style={styles.emptyTitle}>{vencida ? 'Tu cuota está vencida' : 'La rutina es para los socios del gym'}</Text>
+          <Text style={styles.emptySub}>
+            {vencida
+              ? `${fechaVence ? `Venció el ${fechaVence}. ` : ''}Mientras tanto la app funciona como podómetro.\nCuando la renueves en recepción, tu rutina vuelve sola.`
+              : `${acceso.dni ? `Tu DNI (${acceso.dni}) no figura como socio de New Life Gym.` : 'Tu DNI no figura como socio de New Life Gym.'}\nSi ya sos socio, pedí en recepción que te carguen con ese DNI y tocá "Volver a intentar".`}
+          </Text>
+          <TouchableOpacity
+            style={[styles.armarBtn, { backgroundColor: colors.primary }]}
+            onPress={() => {
+              setReintentando(true);
+              acceso.reintentar();
+              setTimeout(() => setReintentando(false), 1500);
+            }}
+            disabled={reintentando}
+            activeOpacity={0.85}
+          >
+            {reintentando
+              ? <ActivityIndicator color={colors.textInverse} />
+              : <>
+                  <Ionicons name="refresh" size={18} color={colors.textInverse} />
+                  <Text style={[styles.armarBtnText, { color: colors.textInverse }]}>Volver a intentar</Text>
+                </>}
+          </TouchableOpacity>
+        </View>
+      </PantallaSegura>
+      </Animated.View>
+    );
+  }
+
+  // ── Loading ──────────────────────────────────────────────────────────────────
+  if (routine === undefined || acceso.estado === 'cargando') {
+    return (
+      <Animated.View style={screenStyle}>
+      <PantallaSegura style={styles.container}>
         {fondo}
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={colors.primary} size="large" />
         </View>
-      </SafeAreaView>
+      </PantallaSegura>
       </Animated.View>
     );
   }
@@ -211,7 +276,7 @@ export default function RutinaScreen({ navigation }) {
   if (!routine) {
     return (
       <Animated.View style={screenStyle}>
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <PantallaSegura style={styles.container}>
         {fondo}
         <Animated.View style={[styles.header, headerFadeStyle]}>
           <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>Mi Rutina</Text>
@@ -242,14 +307,14 @@ export default function RutinaScreen({ navigation }) {
             <Text style={[styles.armarBtnText, { color: colors.primary }]}>Elegir una rutina del gym</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </PantallaSegura>
       </Animated.View>
     );
   }
 
   return (
     <Animated.View style={screenStyle}>
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <PantallaSegura style={styles.container}>
       {fondo}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
@@ -427,6 +492,7 @@ export default function RutinaScreen({ navigation }) {
         const modalEx = exercises.find(e => e.id === weightModalId);
         return modalEx ? (
           <SeriesLogModal
+            key={modalEx.id}
             exercise={modalEx}
             savedWeight={savedWeights[modalEx.id]}
             hechas={seriesHoy[modalEx.id] ?? []}
@@ -438,7 +504,7 @@ export default function RutinaScreen({ navigation }) {
           />
         ) : null;
       })()}
-    </SafeAreaView>
+    </PantallaSegura>
     </Animated.View>
   );
 }
@@ -624,7 +690,9 @@ function SeriesLogModal({ exercise, savedWeight, hechas = [], onSerie, onReinici
     const v = savedWeight?.value != null ? savedWeight.value : (exercise.carga ?? 0);
     return v > 0 ? String(v) : '';
   });
-  const [reps, setReps] = useState(targetReps);
+  // Arranca con las reps de la última serie que hizo hoy (si bajó a 10, sigue
+  // en 10); la primera, con las de la rutina.
+  const [reps, setReps] = useState(() => Number(hechas[hechas.length - 1]?.reps) || targetReps);
 
   const slideAnim  = useSharedValue(SCREEN_H);
   const slideStyle = useAnimatedStyle(() => ({ transform: [{ translateY: slideAnim.value }] }));
@@ -671,14 +739,14 @@ function SeriesLogModal({ exercise, savedWeight, hechas = [], onSerie, onReinici
     if (completo) return;
     if (weight > 0) onWeightSave(weight);
     onSerie?.({ reps, peso: weight > 0 ? weight : null });
-    if (hechas.length + 1 < totalSeries) {
-      setReps(targetReps);
-    } else {
+    // Las reps quedan como las puso para la serie siguiente (no vuelven a las
+    // de la rutina).
+    if (hechas.length + 1 >= totalSeries) {
       slideAnim.value = withTiming(SCREEN_H, { duration: 280, easing: Easing.in(Easing.cubic) }, (finished) => {
         if (finished) runOnJS(onClose)();
       });
     }
-  }, [completo, hechas.length, totalSeries, weight, reps, targetReps, onWeightSave, onSerie, onClose]);
+  }, [completo, hechas.length, totalSeries, weight, reps, onWeightSave, onSerie, onClose]);
 
   const hintText = completo
     ? '¡Ejercicio completado hoy! ✓'
@@ -866,7 +934,7 @@ function SeriesLogModal({ exercise, savedWeight, hechas = [], onSerie, onReinici
                     <Ionicons name="checkmark-done" size={20} color="#000" />
                     <Text style={slSt.saveBtnText}>LISTO</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => onReiniciar?.()} style={slSt.reiniciarBtn} activeOpacity={0.7}>
+                  <TouchableOpacity onPress={() => { setReps(targetReps); onReiniciar?.(); }} style={slSt.reiniciarBtn} activeOpacity={0.7}>
                     <Ionicons name="refresh" size={14} color="#888" />
                     <Text style={slSt.reiniciarTexto}>Empezar de nuevo</Text>
                   </TouchableOpacity>

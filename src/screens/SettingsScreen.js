@@ -6,6 +6,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
 import useAuth from '../hooks/useAuth';
+import useUserProfile from '../hooks/useUserProfile';
+import { cambiarNombre } from '../services/userService';
+import { actualizarMisTorneos } from '../services/torneoService';
 import {
   nativeServiceAvailable,
   getNotificationSilent,
@@ -15,7 +18,36 @@ import {
 export default function SettingsScreen({ navigation }) {
   const { theme: { colors } } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { deleteAccount } = useAuth();
+  const { user, deleteAccount } = useAuth();
+  const { profile } = useUserProfile();
+
+  // Nombre de la app (no el de la ficha del gym ni el Excel).
+  const [nombreModal, setNombreModal]   = useState(false);
+  const [nombre, setNombre]             = useState('');
+  const [apellido, setApellido]         = useState('');
+  const [guardandoNombre, setGuardandoNombre] = useState(false);
+  const nombreActual = [profile?.nombre, profile?.apellido].filter(Boolean).join(' ');
+
+  function abrirNombre() {
+    setNombre(profile?.nombre ?? '');
+    setApellido(profile?.apellido ?? '');
+    setNombreModal(true);
+  }
+
+  async function guardarNombre() {
+    if (!nombre.trim() || !user?.uid) return;
+    setGuardandoNombre(true);
+    try {
+      await cambiarNombre(user.uid, nombre, apellido);
+      // Las filas de sus torneos guardan el nombre: se actualizan ya.
+      actualizarMisTorneos(user.uid).catch(() => {});
+      setNombreModal(false);
+    } catch (e) {
+      Alert.alert('No se pudo cambiar el nombre', e?.message ?? 'Probá de nuevo en un rato.');
+    } finally {
+      setGuardandoNombre(false);
+    }
+  }
 
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deletePassword, setDeletePassword]         = useState('');
@@ -196,6 +228,16 @@ export default function SettingsScreen({ navigation }) {
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>CUENTA</Text>
+          <TouchableOpacity style={[styles.row, { marginBottom: 12 }]} onPress={abrirNombre} activeOpacity={0.7}>
+            <View style={styles.rowIcon}>
+              <Ionicons name="person-outline" size={20} color={colors.primary} />
+            </View>
+            <View style={styles.rowBody}>
+              <Text style={styles.rowTitle}>Nombre</Text>
+              <Text style={styles.rowSub}>{nombreActual || 'Sin nombre'}</Text>
+            </View>
+            <Ionicons name="create-outline" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.dangerRow}
             onPress={confirmDeleteAccount}
@@ -211,6 +253,66 @@ export default function SettingsScreen({ navigation }) {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      <Modal
+        visible={nombreModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !guardandoNombre && setNombreModal(false)}
+        statusBarTranslucent
+        navigationBarTranslucent
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Tu nombre</Text>
+            <Text style={styles.modalSub}>
+              Es el que ven tus amigos en los torneos y los entrenadores en la app. Tu ficha del gym no cambia.
+            </Text>
+            <TextInput
+              style={[styles.modalInput, { marginBottom: spacing.sm }]}
+              placeholder="Nombre"
+              placeholderTextColor={colors.textTertiary}
+              value={nombre}
+              onChangeText={setNombre}
+              autoCapitalize="words"
+              autoComplete="given-name"
+              textContentType="givenName"
+              maxLength={30}
+              editable={!guardandoNombre}
+            />
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Apellido"
+              placeholderTextColor={colors.textTertiary}
+              value={apellido}
+              onChangeText={setApellido}
+              autoCapitalize="words"
+              autoComplete="family-name"
+              textContentType="familyName"
+              maxLength={30}
+              editable={!guardandoNombre}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setNombreModal(false)}
+                disabled={guardandoNombre}
+              >
+                <Text style={styles.modalCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalDeleteBtn, { backgroundColor: colors.primary }, (!nombre.trim() || guardandoNombre) && { opacity: 0.5 }]}
+                onPress={guardarNombre}
+                disabled={!nombre.trim() || guardandoNombre}
+              >
+                {guardandoNombre
+                  ? <ActivityIndicator size="small" color={colors.textInverse} />
+                  : <Text style={[styles.modalDeleteText, { color: colors.textInverse }]}>Guardar</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={deleteModalVisible}

@@ -18,6 +18,8 @@ import { db } from '../firebase';
 import GymCelebrationModal from '../components/ui/GymCelebrationModal';
 import LevelUpModal from '../components/ui/LevelUpModal';
 import LogroCompletadoModal from '../components/ui/LogroCompletadoModal';
+import CumpleModal from '../components/ui/CumpleModal';
+import { programarSaludoDeCumple, tocaFestejo, marcarFestejoVisto } from '../services/cumpleService';
 import { LOGROS_DEF } from '../constants/logros';
 import { migrarYRepararLogros, revisarLogros } from '../services/logrosService';
 import { moverDatosPrivados } from '../services/perfilPrivadoService';
@@ -45,6 +47,7 @@ const GymEventsCtx = createContext({
   gymDayIndex: 0,
   showGymCelebration: () => {},
   showLogroModal: () => {},
+  showCumple: () => {},
 });
 
 export function GymEventsProvider({ children }) {
@@ -55,6 +58,7 @@ export function GymEventsProvider({ children }) {
   const [gymCelebration, setGymCeleb]   = useState(false);
   const [levelUpData, setLevelUpData]   = useState(null);
   const [logroData, setLogroData]       = useState(null);
+  const [cumple, setCumple]             = useState(false);
   const [gymDayIndex, setGymDayIndex]   = useState(0);
   const [routine, setRoutine]           = useState(null);
 
@@ -312,6 +316,21 @@ export function GymEventsProvider({ children }) {
     return suscribirAvisosDeCuota(profile?.gymDni);
   }, [user?.uid, hayPerfil, profile?.gymDni]);
 
+  // Cumpleaños: el saludo queda programado en el celular para todos los años
+  // y, si es hoy, el festejo salta al abrir la app (una vez por año). También
+  // al volver a la app, por si quedó abierta desde el día anterior.
+  useEffect(() => {
+    if (!user?.uid || !hayPerfil) return;
+    programarSaludoDeCumple(profile?.fechaNacimiento, profile?.nombre).catch(() => {});
+    const revisar = () => {
+      tocaFestejo(user.uid, profile?.fechaNacimiento).then((toca) => toca && setCumple(true)).catch(() => {});
+    };
+    // Un ratito después de abrir, para no taparse con la pantalla de carga.
+    const t = setTimeout(revisar, 1500);
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') revisar(); });
+    return () => { clearTimeout(t); sub.remove(); };
+  }, [user?.uid, hayPerfil, profile?.fechaNacimiento, profile?.nombre]);
+
   // Actividad en la app (pantalla Actividad de los testers): en vivo y aperturas.
   useActividad(user?.uid, profile?.nombre, profile?.apellido);
 
@@ -364,6 +383,8 @@ export function GymEventsProvider({ children }) {
       gymDayIndex,
       showGymCelebration: () => setGymCeleb(true),
       showLogroModal: (logro) => setLogroData(logro),
+      // Botón de tester del Perfil: el festejo de cumpleaños sin esperar al día.
+      showCumple: () => setCumple(true),
     }}>
       {children}
       {gymCelebration && (
@@ -383,6 +404,12 @@ export function GymEventsProvider({ children }) {
         <LogroCompletadoModal
           logro={logroData}
           onClose={() => setLogroData(null)}
+        />
+      )}
+      {cumple && !gymCelebration && !levelUpData && !logroData && (
+        <CumpleModal
+          nombre={profile?.nombre}
+          onClose={() => { setCumple(false); marcarFestejoVisto(user?.uid); }}
         />
       )}
     </GymEventsCtx.Provider>

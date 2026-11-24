@@ -146,6 +146,26 @@ service cloud.firestore {
         allow read: if esMio(uid) || (esEntrenador() && sub != 'rutinasGuardadas');
         allow write: if esMio(uid) && sub != 'privado';
       }
+
+      // Copas de torneos (trofeos, ver trofeosService). Además del dueño
+      // (regla de arriba), el celular que cierra un torneo guarda las copas
+      // del podio: cualquier participante de un torneo YA TERMINADO puede
+      // crear la copa de otro jugador de ese torneo. Solo crearla: si ya
+      // existe, solo la toca el dueño. Así la copa queda aunque se borre el
+      // torneo.
+      match /trofeos/{torneoId} {
+        allow create: if copaDeTorneoValida(uid, torneoId);
+      }
+    }
+
+    function copaDeTorneoValida(uid, torneoId) {
+      let t = get(/databases/$(database)/documents/torneos/$(torneoId)).data;
+      return logueado()
+        && t.get('activo', true) == false
+        && request.auth.uid in t.get('participantUids', [])
+        && uid in t.get('resultado', {})
+        && request.resource.data.torneoId == torneoId
+        && request.resource.data.puesto in [1, 2, 3];
     }
 
     // Entrenadores: datos personales de todos de una vez (Mis clientes,

@@ -22,7 +22,8 @@ import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS,
   withRepeat, withSequence, Easing,
 } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import useEntradaPantalla from '../hooks/useEntradaPantalla';
+import PantallaSegura from '../components/ui/PantallaSegura';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
@@ -137,11 +138,8 @@ export default function RetosScreen({ navigation }) {
   const nombreStyle = useAnimatedStyle(() => ({ opacity: opacSV.value, transform: [{ translateX: deslizSV.value * 0.4 }] }));
   const llenoStyle = useAnimatedStyle(() => ({ width: `${llenoSV.value}%` }));
 
-  const screenOpacity = useSharedValue(0);
-  const screenStyle   = useAnimatedStyle(() => ({ flex: 1, opacity: screenOpacity.value }));
-  useEffect(() => {
-    screenOpacity.value = withTiming(1, { duration: 280 });
-  }, []);
+  // Entrada al cambiar de pestaña (arranca visible: ver useEntradaPantalla).
+  const screenStyle = useEntradaPantalla();
 
   const trophyY = useSharedValue(0);
   const trophyStyle = useAnimatedStyle(() => ({
@@ -159,7 +157,7 @@ export default function RetosScreen({ navigation }) {
 
   return (
     <Animated.View style={screenStyle}>
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <PantallaSegura style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.scroll, { paddingBottom: espacioBarra }]}
@@ -411,7 +409,7 @@ export default function RetosScreen({ navigation }) {
         </Pressable>
       </Modal>
 
-    </SafeAreaView>
+    </PantallaSegura>
     </Animated.View>
   );
 }

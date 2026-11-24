@@ -32,10 +32,21 @@ export default function TabNavigator() {
       <Tab.Navigator
         hapticFeedbackEnabled
         tabBarActiveTintColor={colors.primary}
+        // iOS 27: la transición de Apple al cambiar de pestaña mostraba la
+        // pantalla en negro un instante. Sin ella, el cambio es instantáneo
+        // (la barra sigue siendo Liquid Glass).
+        disablePageAnimations
         screenOptions={({ route }) => ({
+          // Las 4 pestañas se dibujan al arrancar: en iOS 27 la primera vez
+          // que se abría una pestaña también hacía un flash.
+          lazy: false,
           tabBarIcon: ({ focused }) => ({
             sfSymbol: focused ? `${SIMBOLOS[route.name]}.fill` : SIMBOLOS[route.name],
           }),
+          // Detrás de cada pantalla, el fondo del tema (no el negro del
+          // sistema): si iOS muestra la pestaña un instante antes de dibujarla,
+          // no se ve un flash negro.
+          sceneStyle: { backgroundColor: colors.background },
         })}
       >
         <Tab.Screen name="Inicio" component={HomeScreen}   />

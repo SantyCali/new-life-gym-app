@@ -13,7 +13,8 @@ const pagosCol = (dni) => collection(db, 'socios', String(dni).trim(), 'pagos');
 
 // cargo: lo que corresponde pagar (0 si es solo un pago de deuda).
 // pago: lo que entrega ahora.
-export async function registrarMovimiento(dni, { cargo = 0, pago = 0, concepto = '', planNombre = null, precioLista = null, descuentoPct = 0 }) {
+// tipo: 'consumo' para lo que saca del gym (ver consumosService); los de la cuota no lo llevan.
+export async function registrarMovimiento(dni, { cargo = 0, pago = 0, concepto = '', planNombre = null, precioLista = null, descuentoPct = 0, tipo = null }) {
   const c = Math.max(0, Math.round(Number(cargo) || 0));
   const p = Math.max(0, Math.round(Number(pago) || 0));
   if (!c && !p) return;
@@ -25,6 +26,7 @@ export async function registrarMovimiento(dni, { cargo = 0, pago = 0, concepto =
     planNombre,
     precioLista,
     descuentoPct: Number(descuentoPct) || 0,
+    ...(tipo ? { tipo } : {}),
     cargadoPor: auth.currentUser?.email ?? '',
   });
   // Balance: lo pagado menos lo que correspondía. Negativo = queda debiendo.

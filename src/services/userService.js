@@ -1,5 +1,6 @@
 import { doc, setDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { updateProfile } from 'firebase/auth';
+import { auth, db } from '../firebase';
 import { crearPerfil, guardarPerfil, separarCampos } from './perfilPrivadoService';
 
 const USERS_COLLECTION = 'users';
@@ -41,6 +42,20 @@ export async function createUserDocument(uid, profile) {
 
 export async function updateUserProfile(uid, updates) {
   await guardarPerfil(uid, updates);
+}
+
+// Cambia el nombre que se ve en la app (perfil, torneos, entrenadores). No
+// toca la ficha del gym ni el Excel: esa la manejan los entrenadores.
+// También la cuenta de Firebase (displayName), que usan las iniciales.
+export async function cambiarNombre(uid, nombre, apellido) {
+  const n = String(nombre ?? '').trim().replace(/\s+/g, ' ');
+  const a = String(apellido ?? '').trim().replace(/\s+/g, ' ');
+  if (!n) throw new Error('Escribí tu nombre.');
+  await guardarPerfil(uid, { nombre: n, apellido: a });
+  if (auth.currentUser?.uid === uid) {
+    await updateProfile(auth.currentUser, { displayName: [n, a].filter(Boolean).join(' ') }).catch(() => {});
+  }
+  return { nombre: n, apellido: a };
 }
 
 function todayStr() {

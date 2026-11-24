@@ -29,6 +29,7 @@ import { useTheme } from '../context/ThemeContext';
 import SplashLoader from '../components/ui/SplashLoader';
 import usePushNotifications from '../hooks/usePushNotifications';
 import { GymEventsProvider } from '../context/GymEventsContext';
+import { AccesoGymProvider } from '../hooks/useAccesoGym';
 
 // En Android el stack nativo vacía la pantalla que se cierra antes de la
 // animación de volver (se ve un panel vacío hasta que entra la anterior).
@@ -105,6 +106,7 @@ export default function AppNavigator() {
         if (pendienteRef.current && abrirDesdeNotificacion(pendienteRef.current)) pendienteRef.current = null;
       }}
     >
+    <AccesoGymProvider user={user} isTrainer={isTrainer}>
     <GymEventsProvider>
       <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: colors.background }, cardStyle: { backgroundColor: colors.background } }}>
         {isAuthenticated ? (
@@ -181,6 +183,7 @@ export default function AppNavigator() {
         )}
       </Stack.Navigator>
     </GymEventsProvider>
+    </AccesoGymProvider>
     </NavigationContainer>
   );
 }

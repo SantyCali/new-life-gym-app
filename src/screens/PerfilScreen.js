@@ -32,11 +32,13 @@ import Animated, {
   Extrapolation,
   FadeIn,
 } from 'react-native-reanimated';
+import useEntradaPantalla from '../hooks/useEntradaPantalla';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import PantallaSegura from '../components/ui/PantallaSegura';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { typography, spacing, radius } from '../theme';
@@ -50,6 +52,9 @@ import { subscribeToBodyWeightHistory } from '../services/progressService';
 import { getSocioByDni } from '../services/gymService';
 import { vincularDni, desvincularDni } from '../services/perfilPrivadoService';
 import { awardXPAndCoins } from '../services/gamificationService';
+import { probarSaludoDeCumple } from '../services/cumpleService';
+import useAccesoGym, { esSoloPodometro } from '../hooks/useAccesoGym';
+import TrofeosCard from '../components/ui/TrofeosCard';
 import { deleteField } from 'firebase/firestore';
 import { useStepContext } from '../context/StepContext';
 import { useGymEvents } from '../context/GymEventsContext';
@@ -107,8 +112,10 @@ export default function PerfilScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user: authUser, isTester } = useAuth();
   const { profile, loading } = useUserProfile();
+  // Los que no son socios del gym no ven quién está en el gym (ver useAccesoGym).
+  const soloPodometro = esSoloPodometro(useAccesoGym().estado);
   const { steps: liveSteps } = useStepContext() ?? { steps: 0 };
-  const { isAtGym } = useGymEvents();
+  const { isAtGym, showCumple } = useGymEvents();
   const [activeTab, setActiveTab]     = useState('peso');
   const [drawerOpen, setDrawerOpen]   = useState(false);
   const [editVisible, setEditVisible] = useState(false);
@@ -117,12 +124,8 @@ export default function PerfilScreen({ navigation }) {
   const scrollOffsetRef = React.useRef(0);
   const slideAnim    = useSharedValue(DRAWER_WIDTH);
   const fadeAnim     = useSharedValue(0);
-  const screenOpacity = useSharedValue(0);
-  const screenStyle   = useAnimatedStyle(() => ({ flex: 1, opacity: screenOpacity.value }));
-
-  useEffect(() => {
-    screenOpacity.value = withTiming(1, { duration: 280 });
-  }, []);
+  // Entrada al cambiar de pestaña (arranca visible: ver useEntradaPantalla).
+  const screenStyle = useEntradaPantalla();
 
   // Datos reales del perfil
   const nombre   = profile?.nombre   ?? '';
@@ -307,7 +310,7 @@ export default function PerfilScreen({ navigation }) {
 
   return (
     <Animated.View style={screenStyle}>
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <PantallaSegura style={styles.container}>
       {/* ── Drawer lateral ── */}
       <SideDrawer
         visible={drawerOpen}
@@ -316,7 +319,7 @@ export default function PerfilScreen({ navigation }) {
         onClose={closeDrawer}
         onMedidas={() => navigation.navigate('BodyMeasurements')}
         onAspecto={() => navigation.navigate('Aspecto')}
-        onGym={() => navigation.navigate('Gym')}
+        onGym={soloPodometro ? null : () => navigation.navigate('Gym')}
         onSettings={() => navigation.navigate('Settings')}
         onActividad={isTester ? () => navigation.navigate('Actividad') : null}
         photoUri={photoUri}
@@ -417,7 +420,7 @@ export default function PerfilScreen({ navigation }) {
 
           {/* ── TEMP TEST — solo cuenta dev ── */}
           {isTester && (
-            <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'center', marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, alignSelf: 'center', marginBottom: 8 }}>
               <TouchableOpacity
                 onPress={async () => {
                   if (!authUser?.uid || !profile) return;
@@ -449,6 +452,16 @@ export default function PerfilScreen({ navigation }) {
                 style={{ backgroundColor: '#DC2626', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
               >
                 <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🔄 Restaurar</Text>
+              </TouchableOpacity>
+              {/* El saludo y el festejo de cumpleaños, sin esperar al día. */}
+              <TouchableOpacity
+                onPress={() => {
+                  probarSaludoDeCumple(profile?.nombre).catch(() => {});
+                  showCumple();
+                }}
+                style={{ backgroundColor: '#DB2777', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>🎂 Cumple</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -487,6 +500,9 @@ export default function PerfilScreen({ navigation }) {
             <Text style={styles.coinsLabel}>Nivel {nivelJuego}</Text>
           </View>
         </View>
+
+        {/* ── Trofeos de torneos (estilo PlayStation) ── */}
+        <TrofeosCard uid={authUser?.uid} colors={colors} />
 
         {/* ── Calorías quemadas (deslizable o con las flechitas, como el anillo de Inicio) ── */}
         <View style={styles.calNav}>
@@ -580,7 +596,7 @@ export default function PerfilScreen({ navigation }) {
 
         <View style={{ height: spacing.xl }} />
       </ScrollView>
-    </SafeAreaView>
+    </PantallaSegura>
     </Animated.View>
   );
 }
@@ -1273,7 +1289,8 @@ function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspect
           <Ionicons name="chevron-forward" size={16} color={colors.primary} />
         </TouchableOpacity>
 
-        {/* En el Gym — neon card */}
+        {/* En el Gym — neon card (no para los que solo usan el podómetro) */}
+        {onGym && (
         <TouchableOpacity
           style={drawerStyles.neonCard}
           onPress={() => onClose(onGym)}
@@ -1288,6 +1305,7 @@ function SideDrawer({ visible, slideAnim, fadeAnim, onClose, onMedidas, onAspect
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.primary} />
         </TouchableOpacity>
+        )}
 
         {/* Actividad — solo testers */}
         {onActividad && (

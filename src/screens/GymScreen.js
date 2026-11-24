@@ -11,6 +11,7 @@ import { useTheme } from '../context/ThemeContext';
 import { typography, spacing, radius } from '../theme';
 import useAuth from '../hooks/useAuth';
 import useGymCheckins from '../hooks/useGymCheckins';
+import useAccesoGym, { esSoloPodometro } from '../hooks/useAccesoGym';
 import { addCheckin, removeCheckin, getTodayHistory, getSociosQuotaStatus, analiticaGuardada, actualizarAnalitica, getAllSocios, updateSocio, addSocio, deleteSocio } from '../services/gymService';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -545,6 +546,9 @@ export default function GymScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { isTrainer } = useAuth();
   const { active, activeCount, loading } = useGymCheckins();
+  // Sin ser socio o con la cuota vencida no se ve quién está en el gym (ver useAccesoGym).
+  const acceso = useAccesoGym();
+  const soloPodometro = esSoloPodometro(acceso.estado);
 
   const [pickerVisible, setPickerVisible]     = useState(false);
   const [sociosList, setSociosList]           = useState([]);
@@ -731,6 +735,31 @@ export default function GymScreen({ navigation }) {
       ]
     );
   }, []);
+
+  if (soloPodometro) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.title}>En el Gym</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.md }}>
+          <Ionicons name="lock-closed-outline" size={42} color={colors.primary} />
+          <Text style={{ ...typography.h3, color: colors.text, textAlign: 'center' }}>
+            {acceso.estado === 'vencida' ? 'Tu cuota está vencida' : 'Solo para los socios del gym'}
+          </Text>
+          <Text style={{ ...typography.body, color: colors.textSecondary, textAlign: 'center' }}>
+            {acceso.estado === 'vencida'
+              ? 'Cuando la renueves en recepción, se habilita sola.'
+              : 'Si ya sos socio, pedí en recepción que te carguen con el DNI de tu cuenta.'}
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <Animated.View style={screenStyle}>

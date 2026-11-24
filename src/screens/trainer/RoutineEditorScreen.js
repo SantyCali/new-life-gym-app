@@ -232,15 +232,32 @@ export default function RoutineEditorScreen({ route, navigation }) {
 
   // ── Exercise management ─────────────────────────────────────────────────────
   const addExercise = useCallback((exercise) => {
-    setDays(p => p.map(day => {
-      if (day.id !== activeDayId) return day;
-      // Avoid duplicates
-      if (day.ejercicios.some(e => e.exerciseId === exercise.id)) return day;
-      const slot = makeExerciseSlot(exercise, day.ejercicios.length + 1);
-      return { ...day, ejercicios: [...day.ejercicios, slot] };
-    }));
-    setAddSheet(false);
-  }, [activeDayId]);
+    const agregar = () => {
+      setDays(p => p.map(day => {
+        if (day.id !== activeDayId) return day;
+        // El mismo ejercicio puede ir más de una vez (ej.: otra observación u
+        // otra carga). Cada tarjeta tiene su propio id, así que series, peso y
+        // ✓ hecho no se pisan entre ellas.
+        const slot = makeExerciseSlot(exercise, day.ejercicios.length + 1);
+        return { ...day, ejercicios: [...day.ejercicios, slot] };
+      }));
+      setAddSheet(false);
+    };
+    // Si ya está en el día, se pregunta (puede ser sin querer).
+    const dia = days.find(d => d.id === activeDayId);
+    if (dia?.ejercicios.some(e => e.exerciseId === exercise.id)) {
+      Alert.alert(
+        'Ejercicio repetido',
+        `Acabás de agregar un ejercicio que ya está agregado (${exercise.nombre}). ¿Continuar?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Continuar', onPress: agregar },
+        ],
+      );
+      return;
+    }
+    agregar();
+  }, [activeDayId, days]);
 
   const deleteExercise = useCallback((slotId) => {
     setDays(p => p.map(day => {

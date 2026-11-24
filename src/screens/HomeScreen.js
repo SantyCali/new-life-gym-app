@@ -13,8 +13,9 @@ import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withSpring,
   interpolate, runOnJS, Extrapolation,
 } from 'react-native-reanimated';
+import useEntradaPantalla from '../hooks/useEntradaPantalla';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import PantallaSegura from '../components/ui/PantallaSegura';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,6 +35,7 @@ import { useStepContext } from '../context/StepContext';
 import { calcCalories, calcGymCalories, computeAge, localDateString } from '../services/stepService';
 import { fetchWeeklyStepHistory } from '../services/userService';
 import useGymCheckins from '../hooks/useGymCheckins';
+import useAccesoGym, { esSoloPodometro } from '../hooks/useAccesoGym';
 import { XP_GYM_VISIT } from '../services/gamificationService';
 import EnSalaCard from '../components/ui/EnSalaCard';
 import AvisoPermisoPasos from '../components/ui/AvisoPermisoPasos';
@@ -63,6 +65,8 @@ export default function HomeScreen({ navigation }) {
   const { profile } = useUserProfile();
   const { steps: realSteps, totalCalories: realCalories, hcStatus, installHealthConnect, connectHealthConnect, loading: stepsLoading, goal, setGoal: guardarMeta } = useStepContext();
   const { activeCount: gymCount, ingresosHoy: gymIngresosHoy } = useGymCheckins();
+  const acceso = useAccesoGym();
+  const soloPodometro = esSoloPodometro(acceso.estado);
 
   const weightKgHome = profile?.peso   ? Number(profile.peso)   : 70;
   const heightCmHome  = profile?.altura ? Number(profile.altura) : 170;
@@ -278,17 +282,13 @@ export default function HomeScreen({ navigation }) {
     }, [])
   );
 
-  // Fade-in triggers Reanimated's 120Hz display link for the entire screen,
-  // enabling ProMotion scroll from the moment the screen appears.
-  const screenOpacity = useSharedValue(0);
-  const screenStyle   = useAnimatedStyle(() => ({ flex: 1, opacity: screenOpacity.value }));
-  useEffect(() => {
-    screenOpacity.value = withTiming(1, { duration: 80 });
-  }, []);
+  // Entrada al cambiar de pestaña (arranca visible: ver useEntradaPantalla).
+  // Los 120 Hz ya los da CADisableMinimumFrameDurationOnPhone (app.json).
+  const screenStyle = useEntradaPantalla();
 
   return (
     <Animated.View style={screenStyle}>
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <PantallaSegura style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.scroll, { paddingBottom: espacioBarra }]}
@@ -515,6 +515,31 @@ export default function HomeScreen({ navigation }) {
           />
         </View>
 
+        {/* Los que no son socios del gym solo usan la app como podómetro: sin
+            gente en el gym ni entrenamiento (ver useAccesoGym). */}
+        {soloPodometro ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Rutina')}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.xl,
+              padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surface,
+              borderWidth: 1, borderColor: colors.primary + '33',
+            }}
+          >
+            <Ionicons name="lock-closed-outline" size={22} color={colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontWeight: '700', fontSize: 15 }}>
+                {acceso.estado === 'vencida' ? 'Tu cuota está vencida' : 'Modo podómetro'}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2 }}>
+                {acceso.estado === 'vencida'
+                  ? 'Tus pasos siguen contando. La rutina y el gym vuelven cuando renueves en recepción.'
+                  : 'Tus pasos cuentan igual. La rutina y el gym son para los socios de New Life Gym.'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : (<>
         {/* ── Gym en vivo ── */}
         <View style={{ marginBottom: spacing.xl }}>
           <EnSalaCard cantidad={gymCount} ingresosHoy={isTrainer ? gymIngresosHoy : null} onPress={() => navigation.navigate('Gym')} />
@@ -575,6 +600,7 @@ export default function HomeScreen({ navigation }) {
             </LinearGradient>
           </ImageBackground>
         </TouchableOpacity>
+        </>)}
 
         <View style={{ height: spacing['2xl'] }} />
       </ScrollView>
@@ -594,7 +620,7 @@ export default function HomeScreen({ navigation }) {
         announcement={announcement}
         onClose={() => setAnnEditOpen(false)}
       />
-    </SafeAreaView>
+    </PantallaSegura>
 
     </Animated.View>
   );
